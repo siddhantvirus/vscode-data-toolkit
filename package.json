@@ -1,10 +1,10 @@
 {
   "name": "list-to-csv",
-  "displayName": "List to CSV",
-  "description": "Convert lists to CSV format",
+  "displayName": "Data Toolkit for Developers",
+  "description": "Convert lists, generate SQL, compare columns, count values, deduplicate, and build Excel formulas — built for data engineers.",
   "publisher": "sid-dev",
   "icon": "images/icon.png",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "engines": {
     "vscode": "^1.101.0"
   },
@@ -18,32 +18,52 @@
     "color": "#89cdd3"
   },
   "pricing": "Free",
-  "preview":true,
   "contributes": {
     "commands": [
       {
         "command": "list-to-csv.openWebview",
-        "title": "List to CSV: Open Converter"
+        "title": "Data Toolkit: Open Toolkit",
+        "category": "Data Toolkit"
       },
       {
         "command": "list-to-csv.convert",
-        "title": "List to CSV: Convert to CSV Format",
-        "category": "List to CSV"
+        "title": "Data Toolkit: Convert to CSV Format",
+        "category": "Data Toolkit"
       },
       {
         "command": "list-to-csv.convertToCommaLine",
-        "title": "List to CSV: Convert to Comma Separated Line",
-        "category": "List to CSV"
+        "title": "Data Toolkit: Convert to Comma Separated Line",
+        "category": "Data Toolkit"
       },
       {
         "command": "list-to-csv.generateSQLTable",
-        "title": "List to CSV: Generate SQL Table from Selection",
-        "category": "List to CSV"
+        "title": "Data Toolkit: Generate SQL Table from Selection",
+        "category": "Data Toolkit"
+      },
+      {
+        "command": "list-to-csv.countValues",
+        "title": "Data Toolkit: Count Value Occurrences (GROUP BY)",
+        "category": "Data Toolkit"
+      },
+      {
+        "command": "list-to-csv.removeDuplicates",
+        "title": "Data Toolkit: Remove Duplicate Lines",
+        "category": "Data Toolkit"
+      },
+      {
+        "command": "list-to-csv.compareColumns",
+        "title": "Data Toolkit: Compare Two Columns",
+        "category": "Data Toolkit"
+      },
+      {
+        "command": "list-to-csv.lastUsedConfigurations",
+        "title": "Data Toolkit: Repeat Last Conversion",
+        "category": "Data Toolkit"
       },
       {
         "command": "list-to-csv.openSettings",
-        "title": "List to CSV: Open Extension Settings",
-        "category": "List to CSV"
+        "title": "Data Toolkit: Open Extension Settings",
+        "category": "Data Toolkit"
       }
     ],
     "menus": {
@@ -71,13 +91,25 @@
         {
           "command": "list-to-csv.generateSQLTable",
           "group": "1_convert@3"
+        },
+        {
+          "command": "list-to-csv.countValues",
+          "group": "2_analyze@1"
+        },
+        {
+          "command": "list-to-csv.removeDuplicates",
+          "group": "2_analyze@2"
+        },
+        {
+          "command": "list-to-csv.compareColumns",
+          "group": "2_analyze@3"
         }
       ]
     },
     "submenus": [
       {
         "id": "list-to-csv.submenu",
-        "label": "List to CSV Options"
+        "label": "Data Toolkit"
       }
     ],
     "configuration": {
@@ -142,13 +174,17 @@
   },
   "keywords": [
     "csv",
-    "list",
-    "bullet points",
-    "numbered list",
-    "conversion",
-    "data",
-    "formatter",
     "sql",
-    "in clause"
+    "data engineer",
+    "list",
+    "dedup",
+    "vlookup",
+    "excel",
+    "compare",
+    "group by",
+    "count",
+    "formatter",
+    "in clause",
+    "create table"
   ]
 }

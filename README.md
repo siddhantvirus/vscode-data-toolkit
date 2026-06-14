@@ -1,185 +1,163 @@
-# List to CSV
+# Data Toolkit for Developers
 
-<img src="images/icon.png" alt="List to CSV Icon" width="128">
+<img src="images/icon.png" alt="Data Toolkit Icon" width="128">
 
-A Visual Studio Code extension to easily convert various list formats into CSV data.
+A VS Code extension built for data engineers. Convert lists, build SQL scripts, compare columns, count values, deduplicate data, and assemble Excel formulas — all without leaving your editor.
 
-## Features
+---
 
-This extension allows you to convert different types of lists (bullet points, numbered lists, or plain text) into properly formatted CSV data or comma-separated lines. It's particularly useful when you need to:
+## Features at a Glance
 
-- Convert bullet point lists to structured CSV data
-- Transform numbered lists into spreadsheet-ready formats
-- Extract data from lists with consistent formatting
-- Prepare list data for import into Excel, Google Sheets, or databases
-- Create SQL IN clauses from lists for database queries
+| Feature | How to access |
+|---|---|
+| Convert list to CSV / SQL IN clause | Right-click selection → Data Toolkit |
+| Count value occurrences (GROUP BY) | Right-click selection → Data Toolkit |
+| Remove duplicate lines | Right-click selection → Data Toolkit |
+| Compare two columns (set operations) | Right-click selection → Data Toolkit |
+| Generate SQL CREATE TABLE + INSERTs | Webview → SQL Builder tab |
+| Build Excel formulas with live preview | Webview → Excel Formulas tab |
 
-### Supported List Types
+---
 
-- Bullet points (*, -, •, etc.)
-- Numbered lists (1., 1), (1), etc.)
-- Plain text with consistent spacing
+## Context Menu (Right-Click) Commands
 
-### How it works
+Select one or more lines in any editor, right-click, and choose **Data Toolkit** from the context menu.
 
-#### List to CSV Conversion
+### Convert to CSV Format
+Converts a multi-line selection into a properly formatted CSV row. Strips bullet points, numbers, and other list prefixes. Respects the delimiter setting.
 
-Select your list in the editor, right-click, and choose "Convert List to CSV" from the context menu
-<!-- 
-:
-
-![Convert List to CSV](https://raw.githubusercontent.com/yourusername/list-to-csv/main/images/demo.gif) -->
-
-#### Interactive WebView
-
-Open the interactive WebView by:
-
-1. Right-clicking on selected text and choosing "Open List to CSV Converter (WebView)"
-2. Using the Command Palette (Ctrl+Shift+P) and typing "Open List to CSV Converter (WebView)"
-
-The WebView provides a user-friendly interface with options for:
-- Removing duplicates
-- Choosing separators
-- Setting quote style (single or double quotes)
-- Formatting as SQL IN clause
-
-#### Command Palette Integration
-
-You can also convert lists via the Command Palette:
-
-1. Select your list text
-2. Open the Command Palette (Ctrl+Shift+P)
-3. Type "Convert List to Comma Separated Line"
-4. Follow the prompts to configure your conversion options
-
-## Usage Examples
-
-**Convert a bullet list to CSV:**
-
-```
-* Apple Red 1.99
-* Banana Yellow 0.99
-* Orange Orange 2.49
-```
-
-**To CSV output:**
-```
-Column 1,Column 2,Column 3
-Apple,Red,1.99
-Banana,Yellow,0.99
-Orange,Orange,2.49
-```
-
-**Convert list to comma-separated line:**
-
-```
-apple
-orange
-banana
-```
-
-**To comma-separated line:**
-```
-'apple','orange','banana'
-```
-
-**Convert list to SQL IN clause:**
-
-```
-apple
-orange
-banana
-```
-
-**To SQL IN clause:**
-```
-IN ('apple','orange','banana')
-```
-
-## SQL Table Generation
-
-The extension also provides SQL table generation capabilities:
+### Convert to Comma Separated Line
+Converts a list into a single comma-separated line. Optionally wraps each value in single quotes — ready to paste into a SQL `IN (...)` clause.
 
 ### Generate SQL Table from Selection
+Select tabular data (tab- or comma-separated, with a header row) and generate a complete `CREATE TABLE` + `INSERT` script for the target SQL dialect.
 
-1. Select your tabular data in the editor 
-2. Right-click and choose "Generate SQL Table from Selection" or use the Command Palette
-3. Enter a table name, select your preferred SQL dialect, and choose whether to infer data types
-4. The generated SQL script (both CREATE TABLE and INSERT statements) will be copied to your clipboard
+### Count Value Occurrences (GROUP BY)
+Select a list of values and get a `value,count` CSV copied to your clipboard — sorted by frequency descending. Equivalent to `SELECT value, COUNT(*) GROUP BY value ORDER BY 2 DESC`.
 
-### SQL Dialect Support
+### Remove Duplicate Lines
+Deduplicates the selected lines in-place, preserving the order of first occurrence.
 
-- Microsoft SQL Server
-- MySQL
-- PostgreSQL
-- Spark SQL
+### Compare Two Columns
+Opens the Data Toolkit panel on the Compare tab with Column A pre-filled from the current selection. Paste Column B to run set operations.
 
-### Data Type Inference
+---
 
-The extension can automatically infer appropriate data types for columns based on the data:
-- Numeric values (integers, decimals)
-- Dates and timestamps
-- Text values with appropriate length
+## Data Toolkit Panel (Webview)
 
-### Complete SQL Script Generation
+Open via the Command Palette (`Ctrl+Shift+P` → **Data Toolkit: Open Toolkit**) or the right-click menu.
 
-The extension generates a complete SQL script that includes:
-- CREATE TABLE statement with proper dialect-specific syntax
-- INSERT statements for all data rows
-- Proper escaping of special characters based on SQL dialect
-- AUTO_INCREMENT/IDENTITY or dialect-specific features
+### Tab 1 — Convert
 
-### WebView SQL Options
+Paste a list into the input area and convert it with options:
 
-In the WebView interface, you can also:
-- Enable the "Generate SQL Table" option
-- Configure table name, SQL dialect, and data type inference settings
-- Use the "Generate SQL Table & Data" button to create a complete SQL script and preview it
+- **Remove duplicates** before converting
+- **Output format**: comma-separated line, CSV rows, or SQL IN clause
+- **Quote style**: single or double quotes
+- **Delimiter**: any character
 
-<!-- ![SQL Table Generation](https://raw.githubusercontent.com/yourusername/list-to-csv/main/images/sql-table-demo.gif) -->
+The result is copied to your clipboard and shown in the preview area.
 
-## Extension Settings
+### Tab 2 — Count & Dedupe
 
-This extension provides the following settings:
+Paste a list to:
 
-* `list-to-csv.delimiter`: Character used to separate fields in the CSV output (default: ",")
-* `list-to-csv.includeHeaders`: Include header row in the CSV output (default: true)
-* `list-to-csv.quoteAllFields`: Quote all fields in the CSV output, not just those that need it (default: false)
-* `list-to-csv.escapeCharacter`: Character used to quote fields in the CSV output (default: ")
+- **Count values** — get a sortable `value,count` table with a copy-to-clipboard button
+- **Remove duplicates** — see the deduplicated list and copy it
 
-You can access these settings by:
-1. Opening the Command Palette (Ctrl+Shift+P / Cmd+Shift+P)
-2. Typing "Open List to CSV Settings"
-3. Selecting the extension settings that appear
+### Tab 3 — Compare Columns
 
-## Commands
+Paste two lists (one per column) and choose a set operation:
 
-This extension provides the following commands:
+| Operation | Description |
+|---|---|
+| Only in A | Values present in Column A but not Column B |
+| In Both | Values present in both columns (intersection) |
+| Only in B | Values present in Column B but not Column A |
 
-* `list-to-csv.convert`: Convert the selected text to CSV format
-* `list-to-csv.convertToCommaLine`: Convert the selected text to a comma-separated line (with options for SQL IN clause)
-* `list-to-csv.openWebview`: Open the interactive WebView interface
-* `list-to-csv.openSettings`: Open the extension settings
+Results are shown as a list and can be copied to the clipboard.
+
+### Tab 4 — SQL Builder
+
+Paste tabular data (auto-detects tab, comma, pipe, or semicolon delimiters) and configure:
+
+- **Table name**
+- **SQL dialect**: Spark SQL, MS SQL Server, MySQL, PostgreSQL
+- **Infer data types**: automatically detects INTEGER, DECIMAL, DATE, TIMESTAMP, VARCHAR
+
+Generates a `CREATE TABLE` statement and `INSERT` rows. Copy the full script to your clipboard.
+
+**Example input:**
+```
+id	name	hire_date	salary
+1	Alice	2022-03-15	75000
+2	Bob	2021-07-01	82000
+```
+
+**Example output (PostgreSQL):**
+```sql
+CREATE TABLE employees (
+    id INTEGER,
+    name VARCHAR(5),
+    hire_date DATE,
+    salary INTEGER
+);
+
+INSERT INTO employees (id, name, hire_date, salary) VALUES (1, 'Alice', '2022-03-15', 75000);
+INSERT INTO employees (id, name, hire_date, salary) VALUES (2, 'Bob', '2021-07-01', 82000);
+```
+
+### Tab 5 — Excel Formulas
+
+Select a formula category, choose a formula, fill in the parameters, and copy the result. A live preview updates as you type.
+
+**Available formulas by category:**
+
+| Category | Formulas |
+|---|---|
+| Lookup | VLOOKUP, HLOOKUP, INDEX-MATCH, XLOOKUP, CHOOSE |
+| Aggregation | SUMIF, COUNTIF, AVERAGEIF, SUMPRODUCT, MAXIFS |
+| Text | CONCATENATE, LEFT/MID/RIGHT, TEXT (number format), TRIM+CLEAN |
+| Date & Time | DATEDIF, NETWORKDAYS, EOMONTH, DATE |
+| Logic & Filter | IF, IFS, IFERROR, FILTER |
+
+---
+
+## Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `list-to-csv.delimiter` | `,` | Field separator for CSV output |
+| `list-to-csv.includeHeaders` | `true` | Include a header row in CSV output |
+| `list-to-csv.quoteAllFields` | `false` | Quote every field, not only those that need it |
+| `list-to-csv.escapeCharacter` | `"` | Quote character used around fields |
+
+Open settings via `Ctrl+Shift+P` → **Data Toolkit: Open Extension Settings**.
+
+---
+
+## Commands Reference
+
+| Command | ID | Description |
+|---|---|---|
+| Open Toolkit | `list-to-csv.openWebview` | Open the Data Toolkit panel |
+| Convert to CSV | `list-to-csv.convert` | Convert selection to CSV rows |
+| Comma Separated Line | `list-to-csv.convertToCommaLine` | Convert selection to a single line |
+| Generate SQL Table | `list-to-csv.generateSQLTable` | Generate CREATE TABLE + INSERTs |
+| Count Values | `list-to-csv.countValues` | Count occurrences, copy value,count CSV |
+| Remove Duplicates | `list-to-csv.removeDuplicates` | Deduplicate selection in-place |
+| Compare Columns | `list-to-csv.compareColumns` | Open Compare tab with Column A pre-filled |
+| Repeat Last Conversion | `list-to-csv.lastUsedConfigurations` | Rerun the most recent conversion |
+| Open Settings | `list-to-csv.openSettings` | Jump to extension settings |
+
+---
 
 ## Requirements
 
-No additional requirements or dependencies.
+No external dependencies. Works out of the box with VS Code 1.101.0 and later.
 
-## Release Notes
-
-### 0.0.1
-
-- Initial release
-- Support for bullet points, numbered lists, and plain text
-- Configurable delimiter, headers, and quoting options
-- WebView interface based on Sample.HTML
-- SQL IN clause formatting option
-- Command palette integration for all features
-
-## Contributing
-
-If you'd like to contribute to this extension, please feel free to submit a pull request or open an issue on the [GitHub repository](https://github.com/siddhantvirus/list-to-csv).
+---
 
 ## License
 
-This extension is licensed under the [MIT License](LICENSE).
+[MIT](LICENSE)

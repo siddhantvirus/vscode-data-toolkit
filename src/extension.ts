@@ -2,8 +2,6 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import { ListToCSVWebviewProvider } from './listToCSVWebviewProvider';
-import * as fs from 'fs';
-import * as path from 'path';
 import { formatSqlValue, getDefaultDataType, inferSqlDataType, detectSeparator } from './utils/sqlUtils';
 
 interface ConversionOptions {
@@ -299,41 +297,111 @@ export function activate(context: vscode.ExtensionContext) {
         }
     );
 
-    // Make sure the Sample.HTML file exists in the extension directory
-    ensureSampleHtmlExists(context);
+    // Count occurrences of each unique value in selection and copy as CSV (value,count)
+    const countValuesCommand = vscode.commands.registerTextEditorCommand(
+        'list-to-csv.countValues',
+        async (textEditor: vscode.TextEditor) => {
+            try {
+                const selection = textEditor.selection;
+                if (selection.isEmpty) {
+                    const mo = { ...expandedMessageOptions };
+                    mo.detail = 'Select one value per line to get occurrence counts.';
+                    vscode.window.showInformationMessage('Please select a list of values to count', mo);
+                    return;
+                }
+                const lines = textEditor.document.getText(selection)
+                    .split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
+                if (lines.length === 0) { return; }
+
+                const counts = new Map<string, number>();
+                for (const l of lines) { counts.set(l, (counts.get(l) ?? 0) + 1); }
+                const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+                const csvRows = sorted.map(([v, c]) => {
+                    const q = v.includes(',') || v.includes('"') || v.includes('\n');
+                    return `${q ? '"' + v.replace(/"/g, '""') + '"' : v},${c}`;
+                });
+                await vscode.env.clipboard.writeText(`value,count\n${csvRows.join('\n')}`);
+
+                const mo = { ...expandedMessageOptions };
+                mo.detail = `${sorted.length} unique value${sorted.length !== 1 ? 's' : ''} from ${lines.length} total.\nTop: ${sorted.slice(0, 3).map(([v, c]) => `${v} (${c}x)`).join(', ')}`;
+                vscode.window.showInformationMessage('Value counts copied to clipboard as CSV!', mo);
+            } catch (error) {
+                const mo = { ...expandedMessageOptions };
+                mo.detail = `Error details: ${error}`;
+                vscode.window.showErrorMessage('Error counting values', mo);
+            }
+        }
+    );
+
+    // Remove duplicate lines from selection in-place
+    const removeDuplicatesCommand = vscode.commands.registerTextEditorCommand(
+        'list-to-csv.removeDuplicates',
+        async (textEditor: vscode.TextEditor, edit: vscode.TextEditorEdit) => {
+            try {
+                const selection = textEditor.selection;
+                if (selection.isEmpty) {
+                    const mo = { ...expandedMessageOptions };
+                    mo.detail = 'Select multiple lines to remove duplicate values.';
+                    vscode.window.showInformationMessage('Please select a list to deduplicate', mo);
+                    return;
+                }
+                const lines = textEditor.document.getText(selection).split(/\r?\n/);
+                const seen = new Set<string>();
+                const unique: string[] = [];
+                let total = 0;
+                for (const line of lines) {
+                    const t = line.trim();
+                    if (!t) { continue; }
+                    total++;
+                    if (!seen.has(t)) { seen.add(t); unique.push(line); }
+                }
+                const removed = total - unique.length;
+                edit.replace(selection, unique.join('\n'));
+
+                const mo = { ...expandedMessageOptions };
+                mo.detail = `Removed ${removed} duplicate${removed !== 1 ? 's' : ''}. ${unique.length} unique value${unique.length !== 1 ? 's' : ''} remain.`;
+                vscode.window.showInformationMessage('Duplicates removed!', mo);
+            } catch (error) {
+                const mo = { ...expandedMessageOptions };
+                mo.detail = `Error details: ${error}`;
+                vscode.window.showErrorMessage('Error removing duplicates', mo);
+            }
+        }
+    );
+
+    // Open the Compare Columns tab in the main webview (pre-populates Column A from selection)
+    const compareColumnsCommand = vscode.commands.registerCommand(
+        'list-to-csv.compareColumns',
+        async () => {
+            listToCSVWebviewProvider.show();
+            const selText =
+                vscode.window.activeTextEditor && !vscode.window.activeTextEditor.selection.isEmpty
+                    ? vscode.window.activeTextEditor.document.getText(vscode.window.activeTextEditor.selection)
+                    : null;
+            setTimeout(() => {
+                listToCSVWebviewProvider.sendMessage({ command: 'switchToTab', tab: 'compare' });
+                if (selText) {
+                    listToCSVWebviewProvider.sendMessage({ command: 'setCompareColumnA', content: selText });
+                }
+            }, 300);
+        }
+    );
 
     context.subscriptions.push(
-        convertToCSVCommand, 
+        convertToCSVCommand,
         openSettingsCommand,
         openWebviewCommand,
         convertToCommaLineCommand,
         generateSQLTableCommand,
         saveConfigCommand,
-        lastUsedConfigCommand
+        lastUsedConfigCommand,
+        countValuesCommand,
+        removeDuplicatesCommand,
+        compareColumnsCommand
     );
 }
 
-/**
- * Ensure that Sample.HTML exists in the extension directory
- */
-function ensureSampleHtmlExists(context: vscode.ExtensionContext) {
-    const sampleHtmlPath = path.join(context.extensionPath, 'Sample.HTML');
-    
-    // If it doesn't exist, we need to create it
-    if (!fs.existsSync(sampleHtmlPath)) {
-        const currentFilePath = '/home/sidops/personal/VSCode Extensions/list-to-csv/Sample.HTML';
-        if (fs.existsSync(currentFilePath)) {
-            try {
-                fs.copyFileSync(currentFilePath, sampleHtmlPath);
-                console.log('Copied Sample.HTML to extension directory');
-            } catch (error) {
-                console.error('Failed to copy Sample.HTML to extension directory:', error);
-            }
-        } else {
-            console.error('Sample.HTML not found in the workspace');
-        }
-    }
-}
 
 /**
  * Prompt the user for comma-separated line options
@@ -661,16 +729,6 @@ async function getSqlTableOptions(): Promise<SqlTableOptions | undefined> {
     return options;
 }
 
-/**
- * Generate SQL table creation script from selected text
- */
-function generateSqlTableScript(text: string, options: SqlTableOptions): string {
-    // Parse the data into headers and rows
-    const { headers, dataLines } = parseSqlTabularData(text, options.includeHeaders);
-    
-    // Generate the SQL table creation script
-    return createSqlTableStatement(headers, dataLines, options);
-}
 
 /**
  * Create a SQL table creation statement

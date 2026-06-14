@@ -1,48 +1,96 @@
-# Welcome to your VS Code Extension
+# Data Toolkit — Developer Guide
 
-## What's in the folder
+## Project Structure
 
-* This folder contains all of the files necessary for your extension.
-* `package.json` - this is the manifest file in which you declare your extension and command.
-  * The sample plugin registers a command and defines its title and command name. With this information VS Code can show the command in the command palette. It doesn’t yet need to load the plugin.
-* `src/extension.ts` - this is the main file where you will provide the implementation of your command.
-  * The file exports one function, `activate`, which is called the very first time your extension is activated (in this case by executing the command). Inside the `activate` function we call `registerCommand`.
-  * We pass the function containing the implementation of the command as the second parameter to `registerCommand`.
+```
+list-to-csv/
+├── src/
+│   ├── extension.ts                  # Entry point: registers all commands
+│   ├── listToCSVWebviewProvider.ts   # Singleton webview panel (5-tab UI)
+│   └── utils/
+│       └── sqlUtils.ts               # SQL helpers used by generateSQLTable command
+├── images/
+│   ├── icon.svg                      # Source icon (edit this, then regenerate PNGs)
+│   ├── icon.png                      # 128×128 — used as marketplace icon
+│   └── icon-256.png                  # 256×256 — higher-res copy
+├── scripts/
+│   └── generate-icons.js             # Converts icon.svg → icon.png + icon-256.png (uses sharp)
+├── package.json
+├── tsconfig.json
+└── esbuild.js                        # Bundles dist/extension.js for the packaged extension
+```
 
-## Setup
+## Running in Development
 
-* install the recommended extensions (amodio.tsl-problem-matcher, ms-vscode.extension-test-runner, and dbaeumer.vscode-eslint)
+1. Press `F5` to launch the **Extension Development Host** — a second VS Code window with the extension loaded.
+2. In that window, right-click any selected text to see the **Data Toolkit** context menu.
+3. Open the Command Palette (`Ctrl+Shift+P`) and search **Data Toolkit** to see all registered commands.
 
+Set breakpoints in `src/extension.ts` or `src/listToCSVWebviewProvider.ts`; they will be hit when the corresponding commands run.
 
-## Get up and running straight away
+## Build
 
-* Press `F5` to open a new window with your extension loaded.
-* Run your command from the command palette by pressing (`Ctrl+Shift+P` or `Cmd+Shift+P` on Mac) and typing `Hello World`.
-* Set breakpoints in your code inside `src/extension.ts` to debug your extension.
-* Find output from your extension in the debug console.
+```bash
+npm run compile       # type-check + lint + bundle (development)
+npm run package       # type-check + lint + bundle (production, minified)
+npm run check-types   # tsc --noEmit only
+npm run lint          # eslint src
+```
 
-## Make changes
+The compiled output goes to `dist/extension.js` (via esbuild). The `out/` directory is used only by the test runner (`compile-tests`).
 
-* You can relaunch the extension from the debug toolbar after changing code in `src/extension.ts`.
-* You can also reload (`Ctrl+R` or `Cmd+R` on Mac) the VS Code window with your extension to load your changes.
+## Regenerating Icons
 
+After editing `images/icon.svg`:
 
-## Explore the API
+```bash
+node scripts/generate-icons.js
+```
 
-* You can open the full set of our API when you open the file `node_modules/@types/vscode/index.d.ts`.
+This overwrites `images/icon.png` (128×128) and `images/icon-256.png` (256×256) using the `sharp` package.
 
-## Run tests
+## Architecture Notes
 
-* Install the [Extension Test Runner](https://marketplace.visualstudio.com/items?itemName=ms-vscode.extension-test-runner)
-* Run the "watch" task via the **Tasks: Run Task** command. Make sure this is running, or tests might not be discovered.
-* Open the Testing view from the activity bar and click the Run Test" button, or use the hotkey `Ctrl/Cmd + ; A`
-* See the output of the test result in the Test Results view.
-* Make changes to `src/test/extension.test.ts` or create new test files inside the `test` folder.
-  * The provided test runner will only consider files matching the name pattern `**.test.ts`.
-  * You can create folders inside the `test` folder to structure your tests any way you want.
+### Webview
 
-## Go further
+`ListToCSVWebviewProvider` is a singleton — one panel is reused across commands. The `show()` method creates or reveals the panel. `sendMessage(message)` posts a message into the webview JS context.
 
-* Reduce the extension size and improve the startup time by [bundling your extension](https://code.visualstudio.com/api/working-with-extensions/bundling-extension).
-* [Publish your extension](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) on the VS Code extension marketplace.
-* Automate builds by setting up [Continuous Integration](https://code.visualstudio.com/api/working-with-extensions/continuous-integration).
+The webview HTML, CSS, and JavaScript are all inlined as a TypeScript template literal inside `getWebviewContent()`. Backticks inside the webview JS must be escaped as `\``.
+
+### Command ↔ Webview Communication
+
+- **Extension → Webview**: `panel.webview.postMessage(message)` — webview listens via `window.addEventListener('message', ...)`.
+- **Webview → Extension**: `vscode.postMessage(message)` — extension listens via `panel.webview.onDidReceiveMessage(...)`.
+
+### tsconfig
+
+`"lib": ["ES2022", "dom"]` — the `dom` lib is required for `setTimeout` and `console` to resolve in the extension host context.
+
+## Packaging & Publishing
+
+```bash
+# Install vsce if not already installed
+npm install -g @vscode/vsce
+
+# Package as .vsix
+vsce package
+
+# Publish to marketplace (requires PAT configured)
+vsce publish
+```
+
+The `vscode:prepublish` script runs `npm run package` (production build) automatically before packaging.
+
+## Adding a New Tab
+
+1. Add the tab button and panel HTML inside `getWebviewContent()` in `listToCSVWebviewProvider.ts`.
+2. Wire up the tab switch logic in the inline JS (`switchTab` function).
+3. If the tab needs to be openable from an editor command, register the command in `extension.ts`, call `listToCSVWebviewProvider.show()`, then `sendMessage({ command: 'switchToTab', tab: 'your-tab-id' })`.
+
+## Key Files
+
+| File | Responsibility |
+|---|---|
+| `src/extension.ts` | Command registration, editor-selection operations, webview lifecycle |
+| `src/listToCSVWebviewProvider.ts` | All UI: HTML/CSS/JS for the 5-tab panel |
+| `src/utils/sqlUtils.ts` | `generateSQLTable` command logic (separate from webview SQL Builder) |
