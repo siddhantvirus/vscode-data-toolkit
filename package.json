@@ -2,6 +2,8 @@
   "name": "list-to-csv",
   "displayName": "List to CSV",
   "description": "Convert lists to CSV format",
+  "publisher": "sid-dev",
+  "icon": "images/icon.png",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.101.0"
@@ -12,6 +14,11 @@
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
+    "galleryBanner": {
+    "color": "#89cdd3"
+  },
+  "pricing": "Free",
+  "preview":true,
   "contributes": {
     "commands": [
       {
