@@ -209,6 +209,14 @@ suite('htmlUtils', () => {
 
 suite('Extension', () => {
 	test('all contributed commands are registered on activation', async () => {
+		// Commands are contributed with no activation events, so nothing has
+		// activated the extension yet — activate it explicitly, otherwise this
+		// asserts a side effect it never triggered.
+		const extension = vscode.extensions.getExtension('sid-dev.list-to-csv');
+		assert.ok(extension, 'extension sid-dev.list-to-csv was not found');
+		await extension.activate();
+		assert.ok(extension.isActive, 'extension failed to activate');
+
 		const registered = await vscode.commands.getCommands(true);
 		const expected = [
 			'list-to-csv.openWebview',
