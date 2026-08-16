@@ -51,19 +51,21 @@ Open via the Command Palette (`Ctrl+Shift+P` → **Data Toolkit: Open Toolkit**)
 
 Paste a list into the input area and convert it with options:
 
+- **Separator**: any character (default `,`)
+- **Enclosure**: none, single quotes, or double quotes
+- **Wrap as SQL IN ( )**: wraps the result in an `IN (...)` clause
 - **Remove duplicates** before converting
-- **Output format**: comma-separated line, CSV rows, or SQL IN clause
-- **Quote style**: single or double quotes
-- **Delimiter**: any character
 
-The result is copied to your clipboard and shown in the preview area.
+Quote characters inside a value are doubled, so `O'Brien` becomes `'O''Brien'` and the clause stays valid. Use **Preview** to see the result, or **Convert & Copy** to copy it to your clipboard.
 
 ### Tab 2 — Count & Dedupe
 
 Paste a list to:
 
-- **Count values** — get a sortable `value,count` table with a copy-to-clipboard button
-- **Remove duplicates** — see the deduplicated list and copy it
+- **Count values** — get a `value,count` list (CSV or TSV), sorted by frequency descending
+- **Remove duplicates** — see the deduplicated list
+
+Both honour the **Case-sensitive** and **Trim whitespace** options, and the result has a copy-to-clipboard button.
 
 ### Tab 3 — Compare Columns
 
@@ -75,7 +77,7 @@ Paste two lists (one per column) and choose a set operation:
 | In Both | Values present in both columns (intersection) |
 | Only in B | Values present in Column B but not Column A |
 
-Results are shown as a list and can be copied to the clipboard.
+All three result sets are shown side by side with counts, and each has its own copy button. **Case-sensitive** and **Trim whitespace** options control how values are matched.
 
 ### Tab 4 — SQL Builder
 
@@ -84,8 +86,11 @@ Paste tabular data (auto-detects tab, comma, pipe, or semicolon delimiters) and 
 - **Table name**
 - **SQL dialect**: Spark SQL, MS SQL Server, MySQL, PostgreSQL
 - **Infer data types**: automatically detects INTEGER, DECIMAL, DATE, TIMESTAMP, VARCHAR
+- **Size VARCHAR to sample**: off by default (`VARCHAR(255)`); enable for widths derived from the pasted data
 
-Generates a `CREATE TABLE` statement and `INSERT` rows. Copy the full script to your clipboard.
+Generates a `CREATE TABLE` statement and `INSERT` rows. Copy the script to your clipboard, or **Open in Editor** to send it to a new SQL tab.
+
+Input is parsed with RFC 4180 quoting, so a field like `"Smith, John"` stays one column. Column names are made into valid, unique SQL identifiers — duplicates are suffixed, names starting with a digit are prefixed, and every dialect quotes its identifiers so reserved words such as `order` are safe.
 
 **Example input:**
 ```
@@ -96,16 +101,21 @@ id	name	hire_date	salary
 
 **Example output (PostgreSQL):**
 ```sql
-CREATE TABLE employees (
-    id INTEGER,
-    name VARCHAR(5),
-    hire_date DATE,
-    salary INTEGER
+CREATE TABLE "employees" (
+    "id" INTEGER,
+    "name" VARCHAR(255),
+    "hire_date" DATE,
+    "salary" INTEGER
 );
 
-INSERT INTO employees (id, name, hire_date, salary) VALUES (1, 'Alice', '2022-03-15', 75000);
-INSERT INTO employees (id, name, hire_date, salary) VALUES (2, 'Bob', '2021-07-01', 82000);
+INSERT INTO "employees" ("id", "name", "hire_date", "salary") VALUES
+    (1, 'Alice', '2022-03-15', 75000),
+    (2, 'Bob', '2021-07-01', 82000);
 ```
+
+With **Size VARCHAR to sample** enabled, `"name"` becomes `VARCHAR(10)` instead.
+
+Values that only *look* numeric are kept as text, so zero-padded identifiers like `007` survive the round trip instead of being written as `7`.
 
 ### Tab 5 — Excel Formulas
 
@@ -115,22 +125,25 @@ Select a formula category, choose a formula, fill in the parameters, and copy th
 
 | Category | Formulas |
 |---|---|
-| Lookup | VLOOKUP, HLOOKUP, INDEX-MATCH, XLOOKUP, CHOOSE |
-| Aggregation | SUMIF, COUNTIF, AVERAGEIF, SUMPRODUCT, MAXIFS |
-| Text | CONCATENATE, LEFT/MID/RIGHT, TEXT (number format), TRIM+CLEAN |
-| Date & Time | DATEDIF, NETWORKDAYS, EOMONTH, DATE |
-| Logic & Filter | IF, IFS, IFERROR, FILTER |
+| Lookup | VLOOKUP, XLOOKUP, INDEX / MATCH |
+| Aggregation | SUMIF, SUMIFS, COUNTIF, COUNTIFS, AVERAGEIF |
+| Text | TEXTJOIN, CONCAT, LEFT, MID, TEXT, SUBSTITUTE |
+| Date & Time | DATEDIF, EOMONTH, NETWORKDAYS, YEAR / MONTH / DAY |
+| Logic & Filter | IFERROR, IFS, UNIQUE, FILTER, SORT |
 
 ---
 
 ## Settings
 
+These settings apply to the **Convert to CSV Format** command. The panel has its own per-tab options.
+
 | Setting | Default | Description |
 |---|---|---|
 | `list-to-csv.delimiter` | `,` | Field separator for CSV output |
-| `list-to-csv.includeHeaders` | `true` | Include a header row in CSV output |
+| `list-to-csv.includeHeaders` | `true` | Add a generated `Column 1, Column 2, ...` header row |
 | `list-to-csv.quoteAllFields` | `false` | Quote every field, not only those that need it |
 | `list-to-csv.escapeCharacter` | `"` | Quote character used around fields |
+| `list-to-csv.varcharSizing` | `fixed` | `fixed` for `VARCHAR(255)`, or `fromSample` to size columns to the widest sampled value (applies to SQL generation) |
 
 Open settings via `Ctrl+Shift+P` → **Data Toolkit: Open Extension Settings**.
 
@@ -155,6 +168,14 @@ Open settings via `Ctrl+Shift+P` → **Data Toolkit: Open Extension Settings**.
 ## Requirements
 
 No external dependencies. Works out of the box with VS Code 1.101.0 and later.
+
+Everything runs locally — the extension makes no network requests and collects no telemetry.
+
+---
+
+## Contributing
+
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build and development instructions, and [open an issue](https://github.com/siddhantvirus/list-to-csv/issues) for anything that looks wrong.
 
 ---
 
