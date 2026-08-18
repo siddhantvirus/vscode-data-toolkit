@@ -50,6 +50,23 @@ jobs:
           name: data-toolkit-vsix
           path: data-toolkit.vsix
 
+      # The secret starts life as a placeholder so the environment can be set
+      # up before the real token exists. Fail here with an explicit message
+      # rather than letting vsce report an opaque 401 after a full build.
+      - name: Verify marketplace token is real
+        if: ${{ !inputs.dry_run }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT is not set on the 'release' environment."
+            exit 1
+          fi
+          if [ "$VSCE_PAT" = "PLACEHOLDER_SET_REAL_VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT is still the placeholder. Add the real Azure DevOps PAT as an environment secret on 'release', then re-run. Use dry_run to test the pipeline without publishing."
+            exit 1
+          fi
+
       # Stable channel — do not add --pre-release unless deliberately moving
       # the listing to the pre-release channel.
       - name: Publish to Marketplace

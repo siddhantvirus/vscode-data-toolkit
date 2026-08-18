@@ -67,7 +67,12 @@ To cut a release:
 
 1. Bump `version` in `package.json` and move the `CHANGELOG.md` `[Unreleased]` section under the new version.
 2. Merge to `main` — the CI workflow must be green.
-3. Run the **Publish** workflow from the Actions tab and approve the deployment when prompted.
+3. Tag the merge commit, e.g. `git tag -a v1.2.0 origin/main -m "..." && git push origin v1.2.0`. Tags are markers only; they do not trigger publishing.
+4. Run the **Publish** workflow from the Actions tab and approve the deployment when prompted.
+
+Run it once with **dry_run** checked to exercise the build and download the packaged `.vsix` artifact without publishing.
+
+`VSCE_PAT` is seeded with a placeholder so the environment could be configured before the token existed. Until it is replaced with a real Azure DevOps PAT, a non-dry-run will stop at the "Verify marketplace token is real" step with an explicit message. Replace it in **Settings → Environments → release → Secrets** — never commit a token or paste one into an issue or PR.
 
 The local fallback is documented in [docs/DEVELOPING.md](docs/DEVELOPING.md#packaging--publishing).
 
