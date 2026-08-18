@@ -10,6 +10,13 @@ name: Publish
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: 'Marketplace channel'
+        type: choice
+        options:
+          - pre-release
+          - stable
+        default: pre-release
       dry_run:
         description: 'Build and package only — do not publish'
         type: boolean
@@ -24,9 +31,9 @@ jobs:
     environment: release
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20.x
           cache: npm
@@ -38,22 +45,72 @@ jobs:
           npm run check-types
           npm run lint
 
+      # The Marketplace rejects semver pre-release suffixes (1.2.0-beta is not a
+      # valid extension version), so the channel is encoded in the minor
+      # number instead: even = stable, odd = pre-release. Publishing to the
+      # wrong channel burns that version permanently — it cannot be reused —
+      # so refuse before anything reaches the Marketplace.
+      - name: Check version matches channel
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          MINOR=$(printf '%s' "$VERSION" | cut -d. -f2)
+
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Version '$VERSION' is not major.minor.patch. The Marketplace rejects suffixes such as -beta or -rc."
+            exit 1
+          fi
+
+          echo "version=$VERSION  minor=$MINOR  channel=${{ inputs.channel }}"
+
+          if [ "${{ inputs.channel }}" = "stable" ] && [ $((MINOR % 2)) -ne 0 ]; then
+            echo "::error::Stable releases use an even minor version, but package.json is $VERSION. Bump to the next even minor before publishing to stable."
+            exit 1
+          fi
+
+          if [ "${{ inputs.channel }}" = "pre-release" ] && [ $((MINOR % 2)) -eq 0 ]; then
+            echo "::error::Pre-releases use an odd minor version, but package.json is $VERSION. Bump to the next odd minor before publishing a pre-release."
+            exit 1
+          fi
+
       - name: Build
         run: npm run package
 
+      # The pre-release flag must be set at package time: the VSIX carries the
+      # channel, and publish --packagePath only uploads what was built here.
       - name: Package VSIX
-        run: npx @vscode/vsce package --out data-toolkit.vsix
+        run: |
+          FLAG=""
+          if [ "${{ inputs.channel }}" = "pre-release" ]; then FLAG="--pre-release"; fi
+          npx @vscode/vsce package $FLAG --out data-toolkit.vsix
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: data-toolkit-vsix
           path: data-toolkit.vsix
 
-      # Stable channel — do not add --pre-release unless deliberately moving
-      # the listing to the pre-release channel.
+      # The secret starts life as a placeholder so the environment can be set
+      # up before the real token exists. Fail here with an explicit message
+      # rather than letting vsce report an opaque 401 after a full build.
+      - name: Verify marketplace token is real
+        if: ${{ !inputs.dry_run }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT is not set on the 'release' environment."
+            exit 1
+          fi
+          if [ "$VSCE_PAT" = "PLACEHOLDER_SET_REAL_VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT is still the placeholder. Add the real Azure DevOps PAT as an environment secret on 'release', then re-run. Use dry_run to test the pipeline without publishing."
+            exit 1
+          fi
+
       - name: Publish to Marketplace
         if: ${{ !inputs.dry_run }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx @vscode/vsce publish --packagePath data-toolkit.vsix
+        run: |
+          FLAG=""
+          if [ "${{ inputs.channel }}" = "pre-release" ]; then FLAG="--pre-release"; fi
+          npx @vscode/vsce publish $FLAG --packagePath data-toolkit.vsix

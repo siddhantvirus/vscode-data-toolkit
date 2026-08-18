@@ -279,7 +279,9 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
 <h1 class="title">Data Toolkit</h1>
 
 <div class="tab-bar">
-    <button class="tab-btn active" data-tab="convert">Convert</button>
+    <!-- data-tab stays "convert": it is the internal id used by switchToTab and
+         the compareColumns command, and is not user-visible. -->
+    <button class="tab-btn active" data-tab="convert">List &rarr; Line</button>
     <button class="tab-btn" data-tab="analyze">Count &amp; Dedupe</button>
     <button class="tab-btn" data-tab="compare">Compare Columns</button>
     <button class="tab-btn" data-tab="sql">SQL Builder</button>

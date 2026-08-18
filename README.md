@@ -2,6 +2,11 @@
 
 <img src="images/icon.png" alt="Data Toolkit Icon" width="128">
 
+[![Marketplace version](https://img.shields.io/visual-studio-marketplace/v/sid-dev.list-to-csv?label=marketplace)](https://marketplace.visualstudio.com/items?itemName=sid-dev.list-to-csv)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/sid-dev.list-to-csv)](https://marketplace.visualstudio.com/items?itemName=sid-dev.list-to-csv)
+[![Rating](https://img.shields.io/visual-studio-marketplace/stars/sid-dev.list-to-csv)](https://marketplace.visualstudio.com/items?itemName=sid-dev.list-to-csv&ssr=false#review-details)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A VS Code extension built for data engineers. Convert lists, build SQL scripts, compare columns, count values, deduplicate data, and assemble Excel formulas — all without leaving your editor.
 
 ---
@@ -47,7 +52,7 @@ Opens the Data Toolkit panel on the Compare tab with Column A pre-filled from th
 
 Open via the Command Palette (`Ctrl+Shift+P` → **Data Toolkit: Open Toolkit**) or the right-click menu.
 
-### Tab 1 — Convert
+### Tab 1 — List → Line
 
 Paste a list into the input area and convert it with options:
 
@@ -175,7 +180,7 @@ Everything runs locally — the extension makes no network requests and collects
 
 ## Contributing
 
-Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build and development instructions, and [open an issue](https://github.com/siddhantvirus/list-to-csv/issues) for anything that looks wrong.
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build and development instructions, and [open an issue](https://github.com/siddhantvirus/vscode-data-toolkit/issues) for anything that looks wrong.
 
 ---
 

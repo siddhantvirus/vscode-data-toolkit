@@ -1,0 +1,12 @@
+# Normalise text files to LF in the repository, regardless of a contributor's
+# core.autocrlf setting. Working trees keep the platform's native endings, so
+# this changes nothing on checkout — it only guarantees the stored form.
+* text=auto
+
+# Binaries must never be line-ending converted
+*.png binary
+*.ico binary
+*.vsix binary
+
+# Generated; keep out of diffs and language statistics
+package-lock.json -diff linguist-generated

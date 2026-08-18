@@ -184,12 +184,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/siddhantvirus/list-to-csv.git"
+    "url": "git+https://github.com/siddhantvirus/vscode-data-toolkit.git"
   },
   "bugs": {
-    "url": "https://github.com/siddhantvirus/list-to-csv/issues"
+    "url": "https://github.com/siddhantvirus/vscode-data-toolkit/issues"
   },
-  "homepage": "https://github.com/siddhantvirus/list-to-csv#readme",
+  "homepage": "https://github.com/siddhantvirus/vscode-data-toolkit#readme",
   "keywords": [
     "csv",
     "sql",

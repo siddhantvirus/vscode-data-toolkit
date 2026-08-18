@@ -118,7 +118,7 @@ Two of the original notes have now been checked; two remain open.
 
 ### Resolved on inspection
 
-- **"Image is not showing up."** Not reproducible on the current listing. `README.md` uses a repo-relative `<img src="images/icon.png">`, and at package time `vsce` rewrites it to `https://github.com/siddhantvirus/list-to-csv/raw/HEAD/images/icon.png` using the `repository` field, which resolves correctly on the live marketplace page. **Caveat:** this only works while the repository is public — making it private or renaming it would break the marketplace image. If the original report predates the `repository` field being added, that explains it.
+- **"Image is not showing up."** Not reproducible on the current listing. `README.md` uses a repo-relative `<img src="images/icon.png">`, and at package time `vsce` rewrites it to `https://github.com/siddhantvirus/vscode-data-toolkit/raw/HEAD/images/icon.png` using the `repository` field, which resolves correctly on the live marketplace page. **Caveat:** this only works while the repository is public — making it private or renaming it would break the marketplace image. If the original report predates the `repository` field being added, that explains it.
 
 - **"I was earlier able to create csv with separate columns. That seems to have gone."** Multi-column output still works. `parseListItems` (`src/extension.ts:578`) splits each line on `/\s{2,}|\t/`, and `generateCSV` pads rows to the widest one. Verified:
 

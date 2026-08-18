@@ -63,11 +63,31 @@ The suite covers the pure utilities (type inference, value formatting, separator
 
 Publishing is gated. The `Publish` workflow is manual-dispatch only and runs against the protected `release` environment, so it pauses for maintainer approval before the marketplace token is available. `VSCE_PAT` is an environment secret, not a repository secret, and pull requests from forks never receive it.
 
-To cut a release:
+### Version numbering
 
-1. Bump `version` in `package.json` and move the `CHANGELOG.md` `[Unreleased]` section under the new version.
-2. Merge to `main` — the CI workflow must be green.
-3. Run the **Publish** workflow from the Actions tab and approve the deployment when prompted.
+The Marketplace rejects semver pre-release suffixes — `1.2.0-beta.1` is not a valid extension version. Versions must be plain `major.minor.patch` integers, so the channel is encoded in the **minor number** instead:
+
+| Channel | Minor | Examples |
+|---|---|---|
+| Stable | even | `1.2.0`, `1.4.0`, `1.6.0` |
+| Pre-release | odd | `1.3.0`, `1.3.1`, `1.3.2` |
+
+Users who opt into pre-releases get the odd versions; everyone else stays on the newest even one. Versions must always increase, and a version can never be reused — publishing to the wrong channel burns that number permanently. The **Check version matches channel** step enforces the parity before anything reaches the Marketplace.
+
+Where things currently stand: `1.0.0` is the published stable release, and `1.1.0` — an odd minor — is the current pre-release line. Promote it to `1.2.0` when it has proven itself.
+
+### Releasing
+
+1. Merge work to `main` — CI must be green.
+2. **Pre-release:** keep `version` on the current odd minor, bumping the patch each time (`1.1.0`, `1.1.1`, …). Merge, then run **Publish** with channel `pre-release`. Repeat as often as useful.
+3. **Stable:** when the pre-release line is proven, bump to the next even minor (`1.2.0`), move the `CHANGELOG.md` `[Unreleased]` section under it, and merge.
+4. Tag the merge commit: `git tag -a v1.2.0 origin/main -m "..." && git push origin v1.2.0`. Tags are markers only and do not trigger publishing.
+5. Run **Publish** with channel `stable` and approve the deployment when prompted.
+6. The next pre-release line then starts at `1.3.0`.
+
+Run it once with **dry_run** checked to exercise the build and download the packaged `.vsix` artifact without publishing.
+
+`VSCE_PAT` is seeded with a placeholder so the environment could be configured before the token existed. Until it is replaced with a real Azure DevOps PAT, a non-dry-run will stop at the "Verify marketplace token is real" step with an explicit message. Replace it in **Settings → Environments → release → Secrets** — never commit a token or paste one into an issue or PR.
 
 The local fallback is documented in [docs/DEVELOPING.md](docs/DEVELOPING.md#packaging--publishing).
 

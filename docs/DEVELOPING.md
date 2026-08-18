@@ -140,7 +140,7 @@ The extension is published on the **stable** channel as `sid-dev.list-to-csv`. D
 
 Preferred route is the gated GitHub Actions workflow — see [CONTRIBUTING.md](../CONTRIBUTING.md#releasing).
 
-> **Marketplace images depend on the repo staying public.** `README.md` uses a repo-relative `<img src="images/icon.png">`. At package time `vsce` rewrites that to `https://github.com/siddhantvirus/list-to-csv/raw/HEAD/images/icon.png` using the `repository` field. If the repository is ever made private or renamed, that URL 404s and the marketplace icon breaks.
+> **Marketplace images depend on the repo staying public.** `README.md` uses a repo-relative `<img src="images/icon.png">`. At package time `vsce` rewrites that to `https://github.com/siddhantvirus/vscode-data-toolkit/raw/HEAD/images/icon.png` using the `repository` field. If the repository is ever made private or renamed, that URL 404s and the marketplace icon breaks.
 
 ## Adding a New Tab
 
