@@ -1,15 +1,19 @@
-<!-- Use this file to provide workspace-specific custom instructions to Copilot. For more details, visit https://code.visualstudio.com/docs/copilot/copilot-customization#_use-a-githubcopilotinstructionsmd-file -->
+# Data Toolkit for Developers — VS Code Extension
 
-# List to CSV VS Code Extension
+A VS Code extension for data engineers: convert lists to CSV and SQL `IN` clauses, generate `CREATE TABLE` + `INSERT` scripts, count and deduplicate values, compare two columns, and build Excel formulas.
 
-This is a VS Code extension project that helps convert lists to CSV format. Please use the get_vscode_api with a query as input to fetch the latest VS Code API references when making modifications to this extension.
+## Project context
 
-## Project Context
+- `src/extension.ts` — command registrations and editor-facing conversions
+- `src/listToCSVWebviewProvider.ts` — the Data Toolkit panel (markup, styles, and browser script in a template string)
+- `src/utils/sqlUtils.ts` — SQL type inference, value formatting, separator detection
+- `src/utils/htmlUtils.ts` — HTML escaping and CSP nonce helpers
 
-This extension aims to provide users with the ability to:
-- Select various types of lists (bullet points, numbered lists, etc.)
-- Convert them to CSV format
-- Support various delimiters and customization options
-- Maintain proper escaping of special characters in CSV output
+## Conventions
 
-When suggesting code implementations, keep in mind VS Code's extension API best practices and performance considerations.
+- Escape every value that reaches a webview; selected editor text is untrusted input.
+- Webviews run under a Content-Security-Policy with a script nonce, so inline `onclick` attributes do not work — use a `data-action` and the `ACTIONS` dispatch table.
+- The panel's SQL helpers mirror those in `sqlUtils.ts`; change both together.
+- Only plain decimal numbers are emitted as unquoted SQL literals, so zero-padded identifiers keep their padding.
+
+Keep VS Code extension API best practices and bundle size in mind — the extension ships with no runtime dependencies.

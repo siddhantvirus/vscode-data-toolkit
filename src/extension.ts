@@ -2,7 +2,17 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import { ListToCSVWebviewProvider } from './listToCSVWebviewProvider';
-import { formatSqlValue, getDefaultDataType, inferSqlDataType, detectSeparator } from './utils/sqlUtils';
+import {
+    formatSqlValue,
+    getDefaultDataType,
+    inferSqlDataType,
+    detectSeparator,
+    parseDelimitedLine,
+    sanitizeColumnNames,
+    VarcharSizing
+} from './utils/sqlUtils';
+import { escapeHtml, escapeRegExp, getNonce } from './utils/htmlUtils';
+import { openSqlInEditor } from './utils/editorUtils';
 
 interface ConversionOptions {
     delimiter: string;
@@ -37,12 +47,29 @@ const expandedMessageOptions: vscode.MessageOptions = {
     detail: '' // We'll set this dynamically when needed
 };
 
+/**
+ * Copy generated SQL to the clipboard and offer to open it in an editor.
+ */
+async function announceGeneratedSql(sql: string, dialect: string): Promise<void> {
+    await vscode.env.clipboard.writeText(sql);
+
+    const messageOptions = { ...expandedMessageOptions };
+    messageOptions.detail = `SQL for ${dialect.toUpperCase()} copied to clipboard.`;
+
+    const choice = await vscode.window.showInformationMessage(
+        'SQL table created successfully!',
+        messageOptions,
+        'Open in Editor'
+    );
+
+    if (choice === 'Open in Editor') {
+        await openSqlInEditor(sql);
+    }
+}
+
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
-    // Use the console to output diagnostic information (console.log) and errors (console.error)
-    console.log('Congratulations, your extension "list-to-csv" is now active!');
-
     // Create an instance of our WebView provider
     const listToCSVWebviewProvider = new ListToCSVWebviewProvider(context);
 
@@ -169,30 +196,14 @@ export function activate(context: vscode.ExtensionContext) {
                     // This ensures we use the same data that was previewed
                     const sqlStatement = createSqlTableStatement(headers, dataLines, options);
                     
-                    // Copy to clipboard
-                    await vscode.env.clipboard.writeText(sqlStatement);
-                    
-                    const messageOptions = {...expandedMessageOptions};
-                    messageOptions.detail = `SQL CREATE TABLE statement for ${options.dialect.toUpperCase()} copied to clipboard.`;
-                    vscode.window.showInformationMessage(
-                        `SQL table created successfully!`,
-                        messageOptions
-                    );
+                    await announceGeneratedSql(sqlStatement, options.dialect);
                     return;
                 }
                 
                 // No preview requested, generate SQL directly
                 const sqlStatement = createSqlTableStatement(headers, dataLines, options);
-                
-                // Copy to clipboard
-                await vscode.env.clipboard.writeText(sqlStatement);
-                
-                const messageOptions = {...expandedMessageOptions};
-                messageOptions.detail = `SQL CREATE TABLE statement for ${options.dialect.toUpperCase()} copied to clipboard.`;
-                vscode.window.showInformationMessage(
-                    `SQL table created successfully!`,
-                    messageOptions
-                );
+
+                await announceGeneratedSql(sqlStatement, options.dialect);
             } catch (error) {
                 const messageOptions = {...expandedMessageOptions};
                 messageOptions.detail = `Error details: ${error}`;
@@ -374,17 +385,20 @@ export function activate(context: vscode.ExtensionContext) {
     const compareColumnsCommand = vscode.commands.registerCommand(
         'list-to-csv.compareColumns',
         async () => {
-            listToCSVWebviewProvider.show();
             const selText =
                 vscode.window.activeTextEditor && !vscode.window.activeTextEditor.selection.isEmpty
                     ? vscode.window.activeTextEditor.document.getText(vscode.window.activeTextEditor.selection)
                     : null;
-            setTimeout(() => {
-                listToCSVWebviewProvider.sendMessage({ command: 'switchToTab', tab: 'compare' });
-                if (selText) {
-                    listToCSVWebviewProvider.sendMessage({ command: 'setCompareColumnA', content: selText });
-                }
-            }, 300);
+
+            // Skip the Convert tab prefill — this command targets the Compare tab.
+            listToCSVWebviewProvider.show({ prefillInput: false });
+
+            // Queued until the webview reports it is ready, so the messages are
+            // never dropped on a slow first load.
+            listToCSVWebviewProvider.sendMessage({ command: 'switchToTab', tab: 'compare' });
+            if (selText) {
+                listToCSVWebviewProvider.sendMessage({ command: 'setCompareColumnA', content: selText });
+            }
         }
     );
 
@@ -465,29 +479,39 @@ async function getCommaLineOptions(): Promise<CommaListOptions | undefined> {
  * Convert list text to comma-separated line
  */
 function convertToCommaLine(text: string, options: CommaListOptions): string {
-    // Split text into lines and remove empty lines
-    const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
-    
+    // Trim before filtering and deduplicating, so that '  foo' and 'foo' are
+    // recognised as the same value and no padding leaks inside the quotes.
+    const lines = text
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(line => line !== '');
+
     if (lines.length === 0) {
         throw new Error('No valid list items found');
     }
-    
+
     // Remove duplicates if specified
-    let processedLines = options.removeDuplicates ? [...new Set(lines)] : lines;
-    
-    // Format lines with enclosures
-    const formattedLines = processedLines.map(line => 
-        `${options.enclosure}${line}${options.enclosure}`
-    );
-    
+    const processedLines = options.removeDuplicates ? [...new Set(lines)] : lines;
+
+    // Format lines with enclosures, doubling any quote character inside the
+    // value — otherwise a value like O'Brien terminates the literal early and
+    // produces a broken IN clause.
+    const { enclosure } = options;
+    const formattedLines = processedLines.map(line => {
+        if (!enclosure) {
+            return line;
+        }
+        return `${enclosure}${line.split(enclosure).join(enclosure + enclosure)}${enclosure}`;
+    });
+
     // Join with separator
     let result = formattedLines.join(options.separator);
-    
+
     // Add SQL IN clause wrapper if specified
     if (options.sqlInClause) {
         result = `IN (${result})`;
     }
-    
+
     return result;
 }
 
@@ -641,18 +665,23 @@ function formatCSVRow(row: string[], options: ConversionOptions): string {
  * Format a cell for CSV output with proper escaping
  */
 function formatCSVCell(cell: string, options: ConversionOptions): string {
-    const { quoteAllFields, escapeCharacter } = options;
-    
-    // Replace any escapeCharacter with doubled escapeCharacter
-    let escaped = cell.replace(new RegExp(escapeCharacter, 'g'), escapeCharacter + escapeCharacter);
-    
+    const { quoteAllFields, delimiter } = options;
+
+    // The quote character comes from user settings, so it may be empty or a
+    // regex metacharacter such as '|' or '('. Fall back to '"' when unset and
+    // escape the pattern, otherwise the replace below either matches every
+    // position or throws a SyntaxError.
+    const quote = options.escapeCharacter || '"';
+    const escaped = cell.replace(new RegExp(escapeRegExp(quote), 'g'), quote + quote);
+
     // Determine if we need to quote the cell
-    const needsQuotes = quoteAllFields || 
-        cell.includes(options.delimiter) || 
-        cell.includes('\n') || 
-        cell.includes(escapeCharacter);
-    
-    return needsQuotes ? `${escapeCharacter}${escaped}${escapeCharacter}` : escaped;
+    const needsQuotes = quoteAllFields ||
+        (delimiter !== '' && cell.includes(delimiter)) ||
+        cell.includes('\n') ||
+        cell.includes('\r') ||
+        cell.includes(quote);
+
+    return needsQuotes ? `${quote}${escaped}${quote}` : escaped;
 }
 
 /**
@@ -739,7 +768,13 @@ function createSqlTableStatement(
     options: SqlTableOptions
 ): string {
     const { tableName, dialect, inferDataTypes } = options;
-    
+
+    // Read fresh rather than storing on the options, so a saved "last used"
+    // configuration cannot pin a stale sizing choice.
+    const varcharSizing = vscode.workspace
+        .getConfiguration('list-to-csv')
+        .get<VarcharSizing>('varcharSizing', 'fixed');
+
     // Start building the SQL statement
     let sql = '';
     
@@ -755,15 +790,17 @@ function createSqlTableStatement(
             sql = `CREATE TABLE "${tableName}" (\n`;
             break;
         case 'spark':
-            sql = `CREATE TABLE ${tableName} (\n`;
+            // Backticks: Spark was the only dialect emitting bare identifiers,
+            // which breaks on reserved words and names starting with a digit.
+            sql = `CREATE TABLE \`${tableName}\` (\n`;
             break;
     }
     
     // Add columns
     for (let i = 0; i < headers.length; i++) {
         const header = headers[i];
-        let dataType = inferDataTypes && sampleData.length > 0 
-            ? inferSqlDataType(sampleData, i, dialect) 
+        const dataType = inferDataTypes && sampleData.length > 0
+            ? inferSqlDataType(sampleData, i, dialect, varcharSizing)
             : getDefaultDataType(dialect);
         
         // Add column definition with proper identifier quoting
@@ -778,7 +815,7 @@ function createSqlTableStatement(
                 sql += `    "${header}" ${dataType}`;
                 break;
             case 'spark':
-                sql += `    ${header} ${dataType}`;
+                sql += `    \`${header}\` ${dataType}`;
                 break;
         }
         
@@ -789,17 +826,19 @@ function createSqlTableStatement(
         }
     }
     
-    // Close the statement
+    // Close the statement, then any dialect-specific table options
     sql += ')';
-    
-    // Add dialect-specific extras
+
     if (dialect === 'spark') {
         sql += '\nUSING DELTA';
     } else if (dialect === 'mysql') {
         sql += '\nENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
-    } else if (dialect === 'postgres') {
-        sql += ';';
     }
+
+    // Terminate for every dialect, not just postgres. An unterminated
+    // CREATE TABLE runs fine alone but fails as soon as the script is executed
+    // as more than one statement.
+    sql += ';';
     
     // Add INSERT statements for data
     if (sampleData.length > 0) {
@@ -829,7 +868,7 @@ function createSqlTableStatement(
                     // Add values with proper SQL escaping
                     for (let j = 0; j < headers.length; j++) {
                         const value = j < row.length ? row[j] : '';
-                        const formattedValue = formatSqlValue(value, inferDataTypes, dialect);
+                        const formattedValue = formatSqlValue(value, inferDataTypes);
                         sql += formattedValue;
                         
                         if (j < headers.length - 1) {
@@ -839,10 +878,10 @@ function createSqlTableStatement(
                     
                     sql += ')';
                     if (i < sampleData.length - 1) {
-                        sql += ',';
+                        sql += ',\n';
                     }
-                    sql += '\n';
                 }
+                sql += ';\n';
                 break;
                 
             case 'mysql':
@@ -867,7 +906,7 @@ function createSqlTableStatement(
                     // Add values with proper SQL escaping
                     for (let j = 0; j < headers.length; j++) {
                         const value = j < row.length ? row[j] : '';
-                        const formattedValue = formatSqlValue(value, inferDataTypes, dialect);
+                        const formattedValue = formatSqlValue(value, inferDataTypes);
                         sql += formattedValue;
                         
                         if (j < headers.length - 1) {
@@ -877,11 +916,10 @@ function createSqlTableStatement(
                     
                     sql += ')';
                     if (i < sampleData.length - 1) {
-                        sql += ',';
+                        sql += ',\n';
                     }
-                    sql += '\n';
                 }
-                sql += ';';
+                sql += ';\n';
                 break;
                 
             case 'postgres':
@@ -906,7 +944,7 @@ function createSqlTableStatement(
                     // Add values with proper SQL escaping
                     for (let j = 0; j < headers.length; j++) {
                         const value = j < row.length ? row[j] : '';
-                        const formattedValue = formatSqlValue(value, inferDataTypes, dialect);
+                        const formattedValue = formatSqlValue(value, inferDataTypes);
                         sql += formattedValue;
                         
                         if (j < headers.length - 1) {
@@ -916,20 +954,19 @@ function createSqlTableStatement(
                     
                     sql += ')';
                     if (i < sampleData.length - 1) {
-                        sql += ',';
+                        sql += ',\n';
                     }
-                    sql += '\n';
                 }
-                sql += ';';
+                sql += ';\n';
                 break;
                 
             case 'spark':
                 // Spark SQL supports standard multi-row INSERT syntax
-                sql += `INSERT INTO ${tableName} (`;
+                sql += `INSERT INTO \`${tableName}\` (`;
                 
                 // Add column names
                 for (let j = 0; j < headers.length; j++) {
-                    sql += headers[j];
+                    sql += `\`${headers[j]}\``;
                     if (j < headers.length - 1) {
                         sql += ', ';
                     }
@@ -945,7 +982,7 @@ function createSqlTableStatement(
                     // Add values with proper SQL escaping
                     for (let j = 0; j < headers.length; j++) {
                         const value = j < row.length ? row[j] : '';
-                        const formattedValue = formatSqlValue(value, inferDataTypes, dialect);
+                        const formattedValue = formatSqlValue(value, inferDataTypes);
                         sql += formattedValue;
                         
                         if (j < headers.length - 1) {
@@ -955,10 +992,10 @@ function createSqlTableStatement(
                     
                     sql += ')';
                     if (i < sampleData.length - 1) {
-                        sql += ',';
+                        sql += ',\n';
                     }
-                    sql += '\n';
                 }
+                sql += ';\n';
                 break;
         }
     }
@@ -979,85 +1016,38 @@ function parseSqlTabularData(text: string, hasHeaders: boolean = true): { header
         throw new Error('No valid data found');
     }
     
-    // Try to detect if the data is tabular (tab, comma, or pipe separated)
-    let separator = detectSeparator(lines[0]);
-    
-    // Use the first line to get column names or generate default ones
+    // Try to detect if the data is tabular (tab, comma, pipe or space aligned)
+    const separator = detectSeparator(lines[0]);
+
     const firstLine = lines[0];
     let headers: string[] = [];
     let dataLines: string[][] = [];
-    
+
     if (separator) {
+        // Quote-aware so that a field such as "Smith, John" stays one column.
+        const rows = lines.map(line => parseDelimitedLine(line, separator));
+
         if (hasHeaders) {
-            // Data is tabular - first line contains headers
-            const rawHeaders = firstLine.split(separator);
-            // Create clean headers (non-empty)
-            headers = rawHeaders.map((header, index) => {
-                const cleaned = header.trim();
-                return cleaned === '' ? `Column${index + 1}` : cleaned;
-            });
-            
-            // Process the rest as data rows (starting from second line)
-            for (let i = 1; i < lines.length; i++) {
-                if (lines[i].trim()) {
-                    // Split the line by separator and handle each cell
-                    const rowCells = lines[i].split(separator);
-                    const processedCells: string[] = [];
-                    
-                    // Process each cell in the row, matching with header count
-                    for (let j = 0; j < headers.length; j++) {
-                        if (j < rowCells.length) {
-                            processedCells.push(rowCells[j].trim());
-                        } else {
-                            // If we have fewer cells than headers, pad with empty strings
-                            processedCells.push('');
-                        }
-                    }
-                    
-                    dataLines.push(processedCells);
-                }
-            }
+            headers = rows[0];
+            dataLines = rows.slice(1);
         } else {
-            // No headers in data, generate column names and include all lines as data
-            const columnCount = firstLine.split(separator).length;
-            headers = Array.from({ length: columnCount }, (_, i) => `Column${i + 1}`);
-            
-            // Process all lines as data (including first line)
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].trim()) {
-                    const rowCells = lines[i].split(separator);
-                    const processedCells: string[] = [];
-                    
-                    // Process each cell in the row, matching with header count
-                    for (let j = 0; j < headers.length; j++) {
-                        if (j < rowCells.length) {
-                            processedCells.push(rowCells[j].trim());
-                        } else {
-                            processedCells.push('');
-                        }
-                    }
-                    
-                    dataLines.push(processedCells);
-                }
-            }
+            headers = Array.from({ length: rows[0].length }, (_, i) => `Column${i + 1}`);
+            dataLines = rows;
         }
+
+        // Square off every row against the header count
+        dataLines = dataLines.map(row =>
+            Array.from({ length: headers.length }, (_, j) => (j < row.length ? row[j] : ''))
+        );
     } else {
         // Single column data
         headers = ['Column1'];
         dataLines = lines.map(line => [line.trim()]);
     }
-    
-    // Clean header names to be valid SQL identifiers
-    headers = headers.map((header, index) => {
-        // If header is empty or just spaces, provide a default name
-        if (!header || header.trim() === '') {
-            return `Column${index + 1}`;
-        }
-        
-        // Replace invalid characters with underscore
-        return header.replace(/[^a-zA-Z0-9_]/g, '_');
-    });
-    
+
+    // Valid, unique SQL identifiers
+    headers = sanitizeColumnNames(headers);
+
     return { headers, dataLines };
 }
 
@@ -1078,29 +1068,33 @@ async function showDataPreviewWebview(
             vscode.ViewColumn.One,
             { enableScripts: true }
         );
-        
+
         // Set the HTML content
         panel.webview.html = getPreviewWebviewContent(headers, dataLines, options);
-        
-        // Handle messages from the webview
+
+        // panel.dispose() fires onDidDispose synchronously, so resolving inside
+        // the message handler after disposing would always lose the race to the
+        // 'cancelled' resolve below. Record the outcome and resolve once, from
+        // the dispose handler, which also covers the user closing the tab.
+        let outcome: 'proceed' | 'cancelled' = 'cancelled';
+
         panel.webview.onDidReceiveMessage(
             message => {
                 switch (message.command) {
                     case 'proceed':
+                        outcome = 'proceed';
                         panel.dispose();
-                        resolve('proceed');
                         break;
                     case 'cancel':
+                        outcome = 'cancelled';
                         panel.dispose();
-                        resolve('cancelled');
                         break;
                 }
             }
         );
-        
-        // Handle panel closing
+
         panel.onDidDispose(() => {
-            resolve('cancelled');
+            resolve(outcome);
         });
     });
 }
@@ -1119,20 +1113,24 @@ function getPreviewWebviewContent(headers: string[], dataLines: string[][], opti
         ? `<p class="message">Showing ${maxRowsToPreview} of ${totalRows} rows.</p>` 
         : '';
 
-    // Build HTML for table headers
-    const tableHeaders = headers.map(h => `<th>${h}</th>`).join('');
-    
+    // Build HTML for table headers. Headers and cells come from the user's
+    // selection, so every value is escaped before it reaches the webview.
+    const tableHeaders = headers.map(h => `<th>${escapeHtml(h)}</th>`).join('');
+
     // Build HTML for table rows
     const tableRows = previewRows.map(row => {
-        const cells = row.map(cell => `<td>${cell}</td>`).join('');
+        const cells = row.map(cell => `<td>${escapeHtml(cell)}</td>`).join('');
         return `<tr>${cells}</tr>`;
     }).join('');
+
+    const nonce = getNonce();
 
     // Return the complete HTML
     return `<!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Data Preview</title>
         <style>
@@ -1246,11 +1244,11 @@ function getPreviewWebviewContent(headers: string[], dataLines: string[][], opti
             <div class="info-section">
                 <div class="info-row">
                     <div class="info-label">Table Name:</div>
-                    <div>${options.tableName}</div>
+                    <div>${escapeHtml(options.tableName)}</div>
                 </div>
                 <div class="info-row">
                     <div class="info-label">SQL Dialect:</div>
-                    <div>${options.dialect.toUpperCase()}</div>
+                    <div>${escapeHtml(options.dialect.toUpperCase())}</div>
                 </div>
                 <div class="info-row">
                     <div class="info-label">Infer Data Types:</div>
@@ -1287,7 +1285,7 @@ function getPreviewWebviewContent(headers: string[], dataLines: string[][], opti
             </div>
         </div>
         
-        <script>
+        <script nonce="${nonce}">
             const vscode = acquireVsCodeApi();
             
             document.getElementById('proceedButton').addEventListener('click', () => {

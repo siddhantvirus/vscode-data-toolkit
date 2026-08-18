@@ -6,3 +6,10 @@ node_modules
 # Generated JavaScript files from TypeScript compilation
 src/**/*.js
 src/**/*.js.map
+
+# Editor backups
+*.bak
+
+# Local agent/tooling state
+.claude/settings.local.json
+.claude/worktrees/

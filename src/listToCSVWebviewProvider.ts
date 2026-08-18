@@ -1,18 +1,37 @@
 import * as vscode from 'vscode';
+import { getNonce } from './utils/htmlUtils';
+import { openSqlInEditor } from './utils/editorUtils';
 
 export class ListToCSVWebviewProvider {
     public static readonly viewType = 'list-to-csv.webview';
     private _panel: vscode.WebviewPanel | undefined;
     private readonly _extensionUri: vscode.Uri;
 
+    /** Set once the webview script has loaded and reported in. */
+    private _ready = false;
+
+    /** Messages posted before the webview was ready, replayed on 'ready'. */
+    private _pending: object[] = [];
+
     constructor(private readonly context: vscode.ExtensionContext) {
         this._extensionUri = context.extensionUri;
     }
 
-    public show() {
+    /**
+     * Reveal the toolkit panel.
+     * @param options.prefillInput Copy the active selection into the Convert
+     * tab. Callers targeting another tab pass false.
+     */
+    public show(options: { prefillInput?: boolean } = {}) {
+        const { prefillInput = true } = options;
+        const isNewPanel = !this._panel;
+
         if (this._panel) {
             this._panel.reveal(vscode.ViewColumn.One);
         } else {
+            this._ready = false;
+            this._pending = [];
+
             this._panel = vscode.window.createWebviewPanel(
                 ListToCSVWebviewProvider.viewType,
                 'Data Toolkit',
@@ -20,19 +39,29 @@ export class ListToCSVWebviewProvider {
                 { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [this._extensionUri] }
             );
 
-            this._panel.webview.html = this._getWebviewContent(this._panel.webview);
+            this._panel.webview.html = this._getWebviewContent();
 
             this._panel.webview.onDidReceiveMessage(
                 message => {
                     switch (message.command) {
+                        case 'ready':
+                            this._ready = true;
+                            for (const queued of this._pending) {
+                                this._panel?.webview.postMessage(queued);
+                            }
+                            this._pending = [];
+                            return;
                         case 'convertAndCopy':
                             vscode.window.showInformationMessage('Converted and copied ' + message.count + ' records to clipboard!');
                             return;
                         case 'sqlGenerated':
-                            vscode.window.showInformationMessage('SQL for ' + message.dialect.toUpperCase() + ' copied to clipboard!');
+                            vscode.window.showInformationMessage('SQL for ' + String(message.dialect).toUpperCase() + ' copied to clipboard!');
                             return;
                         case 'copySuccess':
                             vscode.window.showInformationMessage(message.text);
+                            return;
+                        case 'openInEditor':
+                            openSqlInEditor(String(message.text ?? ''));
                             return;
                         case 'error':
                             vscode.window.showErrorMessage(message.text);
@@ -43,26 +72,49 @@ export class ListToCSVWebviewProvider {
                 this.context.subscriptions
             );
 
-            this._panel.onDidDispose(() => { this._panel = undefined; }, null, this.context.subscriptions);
+            this._panel.onDidDispose(() => {
+                this._panel = undefined;
+                this._ready = false;
+                this._pending = [];
+            }, null, this.context.subscriptions);
         }
 
-        if (vscode.window.activeTextEditor && !vscode.window.activeTextEditor.selection.isEmpty) {
-            const text = vscode.window.activeTextEditor.document.getText(vscode.window.activeTextEditor.selection);
-            setTimeout(() => {
-                this._panel?.webview.postMessage({ command: 'setContent', content: text });
-            }, 300);
+        if (prefillInput) {
+            const editor = vscode.window.activeTextEditor;
+            if (editor && !editor.selection.isEmpty) {
+                // Only overwrite the Convert input on a fresh panel; revealing an
+                // already-open panel must not discard what the user typed there.
+                this.sendMessage({
+                    command: 'setContent',
+                    content: editor.document.getText(editor.selection),
+                    replace: isNewPanel
+                });
+            }
         }
     }
 
+    /**
+     * Post a message to the webview, queueing it if the webview has not
+     * finished loading yet.
+     */
     public sendMessage(message: object) {
-        this._panel?.webview.postMessage(message);
+        if (!this._panel) {
+            return;
+        }
+        if (this._ready) {
+            this._panel.webview.postMessage(message);
+        } else {
+            this._pending.push(message);
+        }
     }
 
-    private _getWebviewContent(_webview: vscode.Webview): string {
+    private _getWebviewContent(): string {
+        const nonce = getNonce();
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Data Toolkit</title>
 <style>
@@ -254,11 +306,12 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
         <div class="option-card">
             <h4>Format</h4>
             <div class="checkbox-row"><input type="checkbox" id="sqlIn"><label for="sqlIn">Wrap as SQL IN&nbsp;( )</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="convertDedup"><label for="convertDedup">Remove duplicates</label></div>
         </div>
     </div>
     <div class="btn-row">
-        <button onclick="convertPreview()">Preview</button>
-        <button onclick="convertAndCopy()">Convert &amp; Copy</button>
+        <button data-action="convertPreview">Preview</button>
+        <button data-action="convertAndCopy">Convert &amp; Copy</button>
     </div>
     <div id="convertPreviewBox" class="output-pre hidden"></div>
     <div id="convertStatus" class="status-box hidden"></div>
@@ -283,14 +336,14 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
         </div>
     </div>
     <div class="btn-row">
-        <button onclick="doCountValues()">Count Values</button>
-        <button class="secondary" onclick="doDedup()">Remove Duplicates</button>
+        <button data-action="doCountValues">Count Values</button>
+        <button class="secondary" data-action="doDedup">Remove Duplicates</button>
     </div>
     <div id="analyzeResult" class="hidden">
         <p class="result-meta" id="analyzeMeta"></p>
         <div id="analyzeOutput" class="output-pre"></div>
         <div class="btn-row" style="margin-top:6px">
-            <button onclick="copyAnalyze()">Copy to Clipboard</button>
+            <button data-action="copyAnalyze">Copy to Clipboard</button>
         </div>
     </div>
     <div id="analyzeStatus" class="status-box hidden"></div>
@@ -316,23 +369,23 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
         </div>
     </div>
     <div class="btn-row">
-        <button onclick="doCompare()">Compare</button>
+        <button data-action="doCompare">Compare</button>
     </div>
     <div id="compareResults" class="three-col hidden">
         <div class="result-card card-only-a">
             <div class="result-card-head"><span>Only in A</span><span class="result-card-count" id="cntA">0</span></div>
             <div class="result-card-body" id="listA"><span class="empty-hint">—</span></div>
-            <div class="result-card-foot"><button onclick="copyCompare('A')">Copy</button></div>
+            <div class="result-card-foot"><button data-action="copyCompare" data-arg="A">Copy</button></div>
         </div>
         <div class="result-card card-common">
             <div class="result-card-head"><span>In Both</span><span class="result-card-count" id="cntCommon">0</span></div>
             <div class="result-card-body" id="listCommon"><span class="empty-hint">—</span></div>
-            <div class="result-card-foot"><button onclick="copyCompare('common')">Copy</button></div>
+            <div class="result-card-foot"><button data-action="copyCompare" data-arg="common">Copy</button></div>
         </div>
         <div class="result-card card-only-b">
             <div class="result-card-head"><span>Only in B</span><span class="result-card-count" id="cntB">0</span></div>
             <div class="result-card-body" id="listB"><span class="empty-hint">—</span></div>
-            <div class="result-card-foot"><button onclick="copyCompare('B')">Copy</button></div>
+            <div class="result-card-foot"><button data-action="copyCompare" data-arg="B">Copy</button></div>
         </div>
     </div>
 </div>
@@ -360,6 +413,7 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
             <h4>Data</h4>
             <div class="checkbox-row"><input type="checkbox" id="sqlHeaders" checked><label for="sqlHeaders">First row is headers</label></div>
             <div class="checkbox-row"><input type="checkbox" id="sqlInferTypes" checked><label for="sqlInferTypes">Auto-detect column types</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="sqlSizeVarchar"><label for="sqlSizeVarchar" title="Off: VARCHAR(255). On: sized to the widest pasted value — tighter, but can truncate data outside the sample.">Size VARCHAR to sample</label></div>
         </div>
         <div class="option-card">
             <h4>Generate</h4>
@@ -368,8 +422,9 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
         </div>
     </div>
     <div class="btn-row">
-        <button onclick="generateSQL()">Generate SQL</button>
-        <button class="secondary" onclick="copySQL()">Copy SQL</button>
+        <button data-action="generateSQL">Generate SQL</button>
+        <button class="secondary" data-action="copySQL">Copy SQL</button>
+        <button class="secondary" data-action="openSqlInEditor">Open in Editor</button>
     </div>
     <div id="sqlOutput" class="sql-output hidden"></div>
     <div id="sqlStatus" class="status-box hidden"></div>
@@ -388,8 +443,21 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
 
 </div><!-- /container -->
 
-<script>
+<script nonce="${nonce}">
 var vscode = acquireVsCodeApi();
+
+/* ── Event delegation ────────────────────────────── */
+/* The Content-Security-Policy above blocks inline handlers, so buttons declare
+   a data-action and are dispatched through this table. It also covers markup
+   rendered later (the formula builder) without rebinding. */
+var ACTIONS = {};
+
+document.addEventListener('click', function(e) {
+    var el = e.target.closest ? e.target.closest('[data-action]') : null;
+    if (!el) { return; }
+    var fn = ACTIONS[el.getAttribute('data-action')];
+    if (fn) { fn(el.getAttribute('data-arg')); }
+});
 
 /* ── Tab switching ───────────────────────────────── */
 document.querySelectorAll('.tab-btn').forEach(function(btn) {
@@ -412,7 +480,9 @@ window.addEventListener('message', function(event) {
     var msg = event.data;
     switch (msg.command) {
         case 'setContent':
-            document.getElementById('listInput').value = msg.content;
+            /* Never clobber text the user already has in the Convert tab. */
+            var input = document.getElementById('listInput');
+            if (msg.replace !== false || !input.value.trim()) { input.value = msg.content; }
             break;
         case 'switchToTab':
             switchToTab(msg.tab);
@@ -424,14 +494,35 @@ window.addEventListener('message', function(event) {
 });
 
 /* ═══ TAB 1: CONVERT ════════════════════════════════════════ */
+function getConvertLines() {
+    /* Split on CRLF as well as LF — a stray \\r would otherwise end up inside
+       the quotes when the list was pasted from a Windows file. */
+    var lines = document.getElementById('listInput').value
+        .split(/\\r?\\n/)
+        .map(function(l) { return l.trim(); })
+        .filter(function(l) { return l !== ''; });
+    if (document.getElementById('convertDedup').checked) {
+        var seen = Object.create(null);
+        lines = lines.filter(function(l) {
+            if (seen[l]) { return false; }
+            seen[l] = true;
+            return true;
+        });
+    }
+    return lines;
+}
+
 function getConvertResult() {
-    var text = document.getElementById('listInput').value.trim();
-    if (!text) { return null; }
+    var lines = getConvertLines();
+    if (!lines.length) { return null; }
     var sep = document.getElementById('separator').value || ',';
     var enc = document.querySelector('input[name="enc"]:checked').value;
     var sqlIn = document.getElementById('sqlIn').checked;
-    var lines = text.split('\\n').filter(function(l) { return l.trim() !== ''; });
-    var formatted = lines.map(function(l) { return enc ? enc + l + enc : l; }).join(sep);
+    /* Double any quote character inside the value, otherwise a value such as
+       O'Brien closes the literal early and produces a broken IN clause. */
+    var formatted = lines.map(function(l) {
+        return enc ? enc + l.split(enc).join(enc + enc) + enc : l;
+    }).join(sep);
     return sqlIn ? 'IN (' + formatted + ')' : formatted;
 }
 
@@ -441,18 +532,19 @@ function convertPreview() {
     var box = document.getElementById('convertPreviewBox');
     box.textContent = result;
     box.classList.remove('hidden');
+    hideStatus('convertStatus');
 }
 
 function convertAndCopy() {
     var result = getConvertResult();
     if (!result) { showStatus('convertStatus', 'Please enter some values.', false); return; }
+    var count = getConvertLines().length;
     navigator.clipboard.writeText(result).then(function() {
-        var lines = document.getElementById('listInput').value.trim().split('\\n').filter(function(l) { return l.trim(); });
         var box = document.getElementById('convertPreviewBox');
         box.textContent = result;
         box.classList.remove('hidden');
-        showStatus('convertStatus', 'Copied ' + lines.length + ' items to clipboard!', true);
-        vscode.postMessage({ command: 'convertAndCopy', count: lines.length });
+        showStatus('convertStatus', 'Copied ' + count + ' items to clipboard!', true);
+        vscode.postMessage({ command: 'convertAndCopy', count: count });
     }).catch(function(err) {
         showStatus('convertStatus', 'Copy failed: ' + err, false);
     });
@@ -465,7 +557,7 @@ function getAnalyzeLines() {
     var text = document.getElementById('analyzeInput').value;
     var trim = document.getElementById('analyzeTrim').checked;
     var cs = document.getElementById('analyzeCaseSensitive').checked;
-    var lines = text.split('\\n').filter(function(l) { return l.trim() !== ''; });
+    var lines = text.split(/\\r?\\n/).filter(function(l) { return l.trim() !== ''; });
     if (trim) { lines = lines.map(function(l) { return l.trim(); }); }
     if (!cs) { lines = lines.map(function(l) { return l.toLowerCase(); }); }
     return lines;
@@ -520,7 +612,7 @@ function doCompare() {
     var trim = document.getElementById('cmpTrim').checked;
 
     function parseCol(id) {
-        var lines = document.getElementById(id).value.split('\\n').filter(function(l) { return l.trim() !== ''; });
+        var lines = document.getElementById(id).value.split(/\\r?\\n/).filter(function(l) { return l.trim() !== ''; });
         if (trim) { lines = lines.map(function(l) { return l.trim(); }); }
         if (!cs) { lines = lines.map(function(l) { return l.toLowerCase(); }); }
         return lines;
@@ -569,9 +661,11 @@ function copyCompare(key) {
 function detectSep(line) {
     if (!line) { return null; }
     if (line.indexOf('\\t') !== -1) { return '\\t'; }
-    if ((line.match(/,/g) || []).length > 0) { return ','; }
-    if ((line.match(/\\|/g) || []).length > 0) { return '|'; }
-    if ((line.match(/\\s{2,}/g) || []).length > 0) { return '  '; }
+    if (line.indexOf(',') !== -1) { return ','; }
+    if (line.indexOf('|') !== -1) { return '|'; }
+    /* Runs of two or more spaces — a fixed '  ' would mis-split columns
+       padded to different widths. */
+    if (/\\s{2,}/.test(line)) { return /\\s{2,}/; }
     return null;
 }
 
@@ -579,38 +673,53 @@ function getDefaultType(dialect) {
     return dialect === 'spark' ? 'STRING' : 'VARCHAR(255)';
 }
 
-function inferType(vals, dialect) {
+var DATE_RX = /^\\d{4}[-\\/]\\d{1,2}[-\\/]\\d{1,2}$/;
+var TS_RX   = /^\\d{4}[-\\/]\\d{1,2}[-\\/]\\d{1,2}[T ]\\d{1,2}:\\d{1,2}/;
+
+/* Decimal integers and decimals only. Number() would also accept '0x1F',
+   '1e5', 'Infinity' and '00123' — writing the last of those unquoted turns a
+   zero-padded id into 123 and silently loses data. */
+var PLAIN_NUMBER_RX = /^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$/;
+
+function isPlainNumber(v) {
+    return PLAIN_NUMBER_RX.test(String(v).trim());
+}
+
+function inferType(vals, dialect, sizeFromSample) {
     if (!vals.length) { return getDefaultType(dialect); }
     var allInt = true, allNum = true, maxLen = 0;
-    var dateRx = /^\\d{4}[-\\/]\\d{1,2}[-\\/]\\d{1,2}$/;
-    var tsRx   = /^\\d{4}[-\\/]\\d{1,2}[-\\/]\\d{1,2}[T ]\\d{1,2}:\\d{1,2}/;
-    var allDate = vals.every(function(v) { return dateRx.test(v); });
-    var allTs   = vals.every(function(v) { return tsRx.test(v); });
+    var allDate = vals.every(function(v) { return DATE_RX.test(v); });
+    var allTs   = vals.every(function(v) { return TS_RX.test(v); });
     vals.forEach(function(v) {
         maxLen = Math.max(maxLen, v.length);
-        var n = Number(v);
-        if (isNaN(n)) { allInt = false; allNum = false; }
-        else if (!Number.isInteger(n)) { allInt = false; }
+        if (!isPlainNumber(v)) { allInt = false; allNum = false; }
+        else if (!Number.isInteger(Number(v))) { allInt = false; }
     });
+    /* Only size from the sample when asked, matching inferSqlDataType in
+       src/utils/sqlUtils.ts. A paste is usually a subset of the real data. */
+    var varcharSize = sizeFromSample
+        ? Math.min(255, Math.max(10, Math.ceil(maxLen * 1.5 / 10) * 10))
+        : 255;
+
     switch (dialect) {
         case 'mssql':
             if (allTs)   { return 'DATETIME'; }
             if (allDate) { return 'DATE'; }
             if (allInt)  { return 'INT'; }
             if (allNum)  { return 'FLOAT'; }
-            return maxLen <= 255 ? 'VARCHAR(255)' : 'TEXT';
+            return maxLen <= 255 ? 'VARCHAR(' + varcharSize + ')' : 'TEXT';
         case 'mysql':
             if (allTs)   { return 'DATETIME'; }
             if (allDate) { return 'DATE'; }
             if (allInt)  { return 'INT'; }
             if (allNum)  { return 'FLOAT'; }
-            return maxLen <= 255 ? 'VARCHAR(255)' : 'TEXT';
+            return maxLen <= 255 ? 'VARCHAR(' + varcharSize + ')' : 'TEXT';
         case 'postgres':
             if (allTs)   { return 'TIMESTAMP'; }
             if (allDate) { return 'DATE'; }
             if (allInt)  { return 'INTEGER'; }
             if (allNum)  { return 'DECIMAL'; }
-            return maxLen <= 255 ? 'VARCHAR(255)' : 'TEXT';
+            return maxLen <= 255 ? 'VARCHAR(' + varcharSize + ')' : 'TEXT';
         case 'spark':
             if (allTs)   { return 'TIMESTAMP'; }
             if (allDate) { return 'DATE'; }
@@ -621,14 +730,11 @@ function inferType(vals, dialect) {
     return getDefaultType(dialect);
 }
 
-function fmtSqlVal(v, infer, dialect) {
+function fmtSqlVal(v, infer) {
     if (!v || v.trim() === '') { return 'NULL'; }
-    var dateRx = /^\\d{4}[-\\/]\\d{1,2}[-\\/]\\d{1,2}$/;
-    var tsRx   = /^\\d{4}[-\\/]\\d{1,2}[-\\/]\\d{1,2}[T ]\\d{1,2}:\\d{1,2}/;
     if (infer) {
-        var n = Number(v);
-        if (!isNaN(n)) { return v; }
-        if (dateRx.test(v) || tsRx.test(v)) { return "'" + v + "'"; }
+        if (isPlainNumber(v)) { return v; }
+        if (DATE_RX.test(v) || TS_RX.test(v)) { return "'" + v + "'"; }
     }
     return "'" + v.replace(/'/g, "''") + "'";
 }
@@ -636,15 +742,58 @@ function fmtSqlVal(v, infer, dialect) {
 function quoteId(name, dialect) {
     switch (dialect) {
         case 'mssql':    return '[' + name + ']';
-        case 'mysql':    return '\`' + name + '\`';
         case 'postgres': return '"' + name + '"';
-        default:         return name;
+        /* mysql and spark both use backticks. Spark previously emitted bare
+           identifiers, which breaks on reserved words and leading digits. */
+        default:         return '\`' + name + '\`';
     }
+}
+
+/* Split one delimited line honouring RFC 4180 quoting, so a field such as
+   "Smith, John" stays a single column. Mirrors parseDelimitedLine in
+   src/utils/sqlUtils.ts. */
+function parseDelimitedLine(line, sep) {
+    if (sep instanceof RegExp || sep.length !== 1) {
+        return line.split(sep).map(function(f) { return f.trim(); });
+    }
+    var fields = [], field = '', inQuotes = false;
+    for (var i = 0; i < line.length; i++) {
+        var ch = line[i];
+        if (inQuotes) {
+            if (ch === '"') {
+                if (line[i + 1] === '"') { field += '"'; i++; }
+                else { inQuotes = false; }
+            } else { field += ch; }
+        } else if (ch === '"' && field.trim() === '') {
+            inQuotes = true; field = '';
+        } else if (ch === sep) {
+            fields.push(field.trim()); field = '';
+        } else { field += ch; }
+    }
+    fields.push(field.trim());
+    return fields;
+}
+
+/* Valid, unique SQL identifiers. Mirrors sanitizeColumnNames in sqlUtils.ts. */
+function sanitizeColumnNames(headers) {
+    var seen = Object.create(null);
+    return headers.map(function(header, index) {
+        var name = String(header == null ? '' : header)
+            .trim()
+            .replace(/[^a-zA-Z0-9_]+/g, '_')
+            .replace(/^_+|_+$/g, '');
+        if (!name) { name = 'column' + (index + 1); }
+        if (/^\\d/.test(name)) { name = 'col_' + name; }
+        var key = name.toLowerCase();
+        var count = seen[key] || 0;
+        seen[key] = count + 1;
+        return count === 0 ? name : name + '_' + (count + 1);
+    });
 }
 
 function generateSQL() {
     var raw = document.getElementById('sqlInput').value;
-    var lines = raw.split('\\n').filter(function(l) { return l.trim() !== ''; });
+    var lines = raw.split(/\\r?\\n/).filter(function(l) { return l.trim() !== ''; });
     if (!lines.length) { showStatus('sqlStatus', 'No data found.', false); return; }
 
     var dialect  = document.getElementById('sqlDialect').value;
@@ -654,23 +803,24 @@ function generateSQL() {
     var infer    = document.getElementById('sqlInferTypes').checked;
     var genCre   = document.getElementById('sqlGenCreate').checked;
     var genIns   = document.getElementById('sqlGenInsert').checked;
+    var sizeVar  = document.getElementById('sqlSizeVarchar').checked;
 
     var sep = detectSep(lines[0]);
     var headers, dataRows;
 
     if (sep) {
+        var rows = lines.map(function(l) { return parseDelimitedLine(l, sep); });
         if (hasHdr) {
-            headers  = lines[0].split(sep).map(function(h) { return h.trim().replace(/[^a-zA-Z0-9_]/g, '_') || 'col'; });
-            dataRows = lines.slice(1).map(function(l) { return l.split(sep).map(function(c) { return c.trim(); }); });
+            headers  = sanitizeColumnNames(rows[0]);
+            dataRows = rows.slice(1);
         } else {
-            var colCount = lines[0].split(sep).length;
-            headers  = Array.from({ length: colCount }, function(_, i) { return 'col' + (i + 1); });
-            dataRows = lines.map(function(l) { return l.split(sep).map(function(c) { return c.trim(); }); });
+            headers  = Array.from({ length: rows[0].length }, function(_, i) { return 'col' + (i + 1); });
+            dataRows = rows;
         }
     } else {
-        headers  = hasHdr ? [] : ['value'];
-        dataRows = hasHdr ? lines.slice(1).map(function(l) { return [l.trim()]; }) : lines.map(function(l) { return [l.trim()]; });
-        if (hasHdr && lines.length) { headers = [lines[0].trim().replace(/[^a-zA-Z0-9_]/g, '_') || 'col']; }
+        headers  = hasHdr && lines.length ? sanitizeColumnNames([lines[0].trim()]) : ['value'];
+        dataRows = hasHdr ? lines.slice(1).map(function(l) { return [l.trim()]; })
+                          : lines.map(function(l) { return [l.trim()]; });
     }
 
     var sql = '';
@@ -679,28 +829,28 @@ function generateSQL() {
         sql += 'CREATE TABLE ' + tbl + ' (\\n';
         headers.forEach(function(h, i) {
             var colVals = dataRows.map(function(r) { return i < r.length ? r[i] : ''; }).filter(function(v) { return v !== ''; });
-            var type = infer ? inferType(colVals, dialect) : getDefaultType(dialect);
+            var type = infer ? inferType(colVals, dialect, sizeVar) : getDefaultType(dialect);
             sql += '    ' + quoteId(h, dialect) + ' ' + type;
             sql += i < headers.length - 1 ? ',\\n' : '\\n';
         });
         sql += ')';
-        if (dialect === 'spark')    { sql += '\\nUSING DELTA'; }
-        if (dialect === 'mysql')    { sql += '\\nENGINE=InnoDB DEFAULT CHARSET=utf8mb4'; }
-        if (dialect === 'postgres') { sql += ';'; }
-        sql += '\\n';
+        if (dialect === 'spark') { sql += '\\nUSING DELTA'; }
+        if (dialect === 'mysql') { sql += '\\nENGINE=InnoDB DEFAULT CHARSET=utf8mb4'; }
+        /* Terminate for every dialect, not just postgres — an unterminated
+           CREATE TABLE fails once the script is run as multiple statements. */
+        sql += ';\\n';
     }
 
     if (genIns && dataRows.length) {
         var colList = headers.map(function(h) { return quoteId(h, dialect); }).join(', ');
         sql += '\\nINSERT INTO ' + tbl + ' (' + colList + ') VALUES\\n';
-        dataRows.forEach(function(row, ri) {
+        sql += dataRows.map(function(row) {
             var vals = headers.map(function(_, ci) {
-                return fmtSqlVal(ci < row.length ? row[ci] : '', infer, dialect);
+                return fmtSqlVal(ci < row.length ? row[ci] : '', infer);
             });
-            sql += '    (' + vals.join(', ') + ')';
-            sql += ri < dataRows.length - 1 ? ',\\n' : '\\n';
-        });
-        if (dialect === 'mysql' || dialect === 'postgres') { sql += ';'; }
+            return '    (' + vals.join(', ') + ')';
+        }).join(',\\n');
+        sql += ';\\n';
     }
 
     var out = document.getElementById('sqlOutput');
@@ -710,14 +860,27 @@ function generateSQL() {
     vscode.postMessage({ command: 'sqlGenerated', dialect: dialect });
 }
 
+function currentSql() {
+    var text = document.getElementById('sqlOutput').textContent;
+    if (!text) {
+        generateSQL();
+        text = document.getElementById('sqlOutput').textContent;
+    }
+    return text;
+}
+
 function copySQL() {
-    var out = document.getElementById('sqlOutput');
-    var text = out.textContent;
-    if (!text) { generateSQL(); text = document.getElementById('sqlOutput').textContent; }
+    var text = currentSql();
     if (!text) { return; }
     navigator.clipboard.writeText(text).then(function() {
         vscode.postMessage({ command: 'copySuccess', text: 'SQL copied to clipboard!' });
     });
+}
+
+function openSqlInEditor() {
+    var text = currentSql();
+    if (!text) { return; }
+    vscode.postMessage({ command: 'openInEditor', text: text });
 }
 
 /* ═══ TAB 5: EXCEL FORMULAS ═════════════════════════════════ */
@@ -1021,7 +1184,7 @@ function renderFormulaList() {
     (FORMULAS[curCat] || []).forEach(function(f) {
         var card = document.createElement('div');
         card.className = 'formula-card' + (curFormula && curFormula.name === f.name ? ' active' : '');
-        card.innerHTML = '<div class="f-name">' + f.name + '</div><div class="f-desc">' + f.desc + '</div>';
+        card.innerHTML = '<div class="f-name">' + escHtml(f.name) + '</div><div class="f-desc">' + escHtml(f.desc) + '</div>';
         card.onclick = function() {
             curFormula = f;
             renderFormulaList();
@@ -1033,22 +1196,22 @@ function renderFormulaList() {
 
 function renderFormulaBuilder(f) {
     var b = document.getElementById('formula-builder');
-    var html = '<h3>' + f.name + '</h3><p class="f-long-desc">' + f.desc + '</p>';
+    var html = '<h3>' + escHtml(f.name) + '</h3><p class="f-long-desc">' + escHtml(f.desc) + '</p>';
     f.params.forEach(function(p) {
-        html += '<div class="param-row"><label for="fp-' + p.id + '">' + p.label + '</label>';
+        html += '<div class="param-row"><label for="fp-' + p.id + '">' + escHtml(p.label) + '</label>';
         if (p.type === 'select') {
-            html += '<select id="fp-' + p.id + '" onchange="refreshPreview()">';
+            html += '<select id="fp-' + p.id + '">';
             p.opts.forEach(function(o) { html += '<option>' + escHtml(o) + '</option>'; });
             html += '</select>';
         } else {
-            html += '<input type="text" id="fp-' + p.id + '" placeholder="' + escHtml(p.ph) + '" oninput="refreshPreview()">';
+            html += '<input type="text" id="fp-' + p.id + '" placeholder="' + escHtml(p.ph) + '">';
         }
         if (p.hint) { html += '<span class="param-hint">' + escHtml(p.hint) + '</span>'; }
         html += '</div>';
     });
     html += '<div class="formula-preview" id="f-preview"></div>';
-    if (f.tip) { html += '<div class="formula-tip"><strong>Tip:</strong> ' + f.tip + '</div>'; }
-    html += '<button onclick="copyFormula()">Copy Formula</button>';
+    if (f.tip) { html += '<div class="formula-tip"><strong>Tip:</strong> ' + escHtml(f.tip) + '</div>'; }
+    html += '<button data-action="copyFormula">Copy Formula</button>';
     b.innerHTML = html;
     refreshPreview();
 }
@@ -1090,7 +1253,28 @@ function escHtml(s) {
 }
 
 /* ── Init ─────────────────────────────────────── */
+ACTIONS.convertPreview  = convertPreview;
+ACTIONS.convertAndCopy  = convertAndCopy;
+ACTIONS.doCountValues   = doCountValues;
+ACTIONS.doDedup         = doDedup;
+ACTIONS.copyAnalyze     = copyAnalyze;
+ACTIONS.doCompare       = doCompare;
+ACTIONS.copyCompare     = copyCompare;
+ACTIONS.generateSQL     = generateSQL;
+ACTIONS.copySQL         = copySQL;
+ACTIONS.openSqlInEditor = openSqlInEditor;
+ACTIONS.copyFormula     = copyFormula;
+
+/* Formula parameter fields are rebuilt on every selection, so listen on the
+   container instead of binding each field. */
+var builderEl = document.getElementById('formula-builder');
+builderEl.addEventListener('input', refreshPreview);
+builderEl.addEventListener('change', refreshPreview);
+
 initFormulas();
+
+/* Tell the extension the webview is live so it can flush queued messages. */
+vscode.postMessage({ command: 'ready' });
 </script>
 </body>
 </html>`;

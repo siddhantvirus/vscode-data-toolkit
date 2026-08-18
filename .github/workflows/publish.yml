@@ -1,0 +1,59 @@
+name: Publish
+
+# Manual dispatch only — deliberately no tag trigger, so there is exactly one
+# path to the marketplace token. Triggering requires write access; the
+# protected `release` environment then pauses for maintainer approval before
+# any secret is injected.
+#
+# Note: this workflow must be on the default branch for the "Run workflow"
+# button to appear.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and package only — do not publish'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify
+        run: |
+          npm run check-types
+          npm run lint
+
+      - name: Build
+        run: npm run package
+
+      - name: Package VSIX
+        run: npx @vscode/vsce package --out data-toolkit.vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-toolkit-vsix
+          path: data-toolkit.vsix
+
+      # Stable channel — do not add --pre-release unless deliberately moving
+      # the listing to the pre-release channel.
+      - name: Publish to Marketplace
+        if: ${{ !inputs.dry_run }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx @vscode/vsce publish --packagePath data-toolkit.vsix
