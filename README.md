@@ -2,6 +2,11 @@
 
 <img src="images/icon.png" alt="Data Toolkit Icon" width="128">
 
+[![Marketplace version](https://img.shields.io/visual-studio-marketplace/v/sid-dev.list-to-csv?label=marketplace)](https://marketplace.visualstudio.com/items?itemName=sid-dev.list-to-csv)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/sid-dev.list-to-csv)](https://marketplace.visualstudio.com/items?itemName=sid-dev.list-to-csv)
+[![Rating](https://img.shields.io/visual-studio-marketplace/stars/sid-dev.list-to-csv)](https://marketplace.visualstudio.com/items?itemName=sid-dev.list-to-csv&ssr=false#review-details)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A VS Code extension built for data engineers. Convert lists, build SQL scripts, compare columns, count values, deduplicate data, and assemble Excel formulas — all without leaving your editor.
 
 ---
