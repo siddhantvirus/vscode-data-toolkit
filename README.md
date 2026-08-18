@@ -52,7 +52,7 @@ Opens the Data Toolkit panel on the Compare tab with Column A pre-filled from th
 
 Open via the Command Palette (`Ctrl+Shift+P` → **Data Toolkit: Open Toolkit**) or the right-click menu.
 
-### Tab 1 — Convert
+### Tab 1 — List → Line
 
 Paste a list into the input area and convert it with options:
 
@@ -180,7 +180,7 @@ Everything runs locally — the extension makes no network requests and collects
 
 ## Contributing
 
-Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build and development instructions, and [open an issue](https://github.com/siddhantvirus/list-to-csv/issues) for anything that looks wrong.
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build and development instructions, and [open an issue](https://github.com/siddhantvirus/vscode-data-toolkit/issues) for anything that looks wrong.
 
 ---
 
