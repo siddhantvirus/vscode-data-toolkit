@@ -6,7 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [1.1.0] — 2026-08-16
+## [1.1.1] — 2026-08-18
+
+Pre-release.
+
+### Fixed
+
+- **Form controls clipped their text.** The dialect dropdown and the text inputs took their font from `--vscode-editor-font-size` inside a fixed 28px box, which — with `box-sizing: border-box` — left only 14px of content height. The editor font defaults to 14px and is commonly set higher, so the text did not fit. Configuration controls now use the UI font and a `min-height`, making them independent of the editor font setting. Textareas keep the monospace editor font, since aligning pasted columns is their purpose.
+
+---
+
+## [1.1.0] — 2026-08-18
+
+Pre-release — the first release on the pre-release channel under the
+even/odd minor convention. See `CONTRIBUTING.md` for the numbering scheme.
 
 ### Fixed
 

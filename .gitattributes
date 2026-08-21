@@ -8,5 +8,7 @@
 *.ico binary
 *.vsix binary
 
-# Generated; keep out of diffs and language statistics
-package-lock.json -diff linguist-generated
+# Generated: collapsed by default in pull requests and excluded from language
+# statistics. Deliberately not `-diff`, which would make git treat it as binary
+# and hide dependency changes that are worth auditing.
+package-lock.json linguist-generated

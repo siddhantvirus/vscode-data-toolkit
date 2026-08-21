@@ -149,17 +149,36 @@ body {
 /* ── Form elements ───────────────────────────────── */
 label { display: block; margin-bottom: 4px; font-size: 12px; font-weight: 500; }
 textarea, input[type="text"], select {
-    width: 100%; padding: 6px 8px;
+    width: 100%;
     border: 1px solid var(--vscode-input-border);
     border-radius: var(--r);
     color: var(--vscode-input-foreground);
     background: var(--vscode-input-background);
+}
+
+/* Pasted data keeps the editor font — monospace makes columns and delimiters
+   line up, which is the whole point of these fields. */
+textarea {
+    padding: 6px 8px;
+    resize: vertical;
     font-family: var(--vscode-editor-font-family);
     font-size: var(--vscode-editor-font-size);
 }
-textarea { resize: vertical; }
-input[type="text"] { height: 28px; }
-select { height: 28px; cursor: pointer; }
+
+/* Configuration controls use the UI font instead. They previously inherited
+   --vscode-editor-font-size, which the user controls and is commonly 15-16px,
+   inside a fixed 28px box that (with border-box) left only 14px of content —
+   so the text clipped. min-height cannot clip, whatever the font size. */
+input[type="text"], select {
+    padding: 4px 8px;
+    min-height: 28px;
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    line-height: 1.4;
+}
+
+/* Leave room for the native dropdown chevron */
+select { cursor: pointer; padding-right: 24px; }
 .checkbox-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; font-size: 12px; }
 .checkbox-row input[type="checkbox"] { accent-color: var(--vscode-focusBorder); margin: 0; }
 
