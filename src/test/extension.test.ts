@@ -7,7 +7,9 @@ import {
 	getDefaultDataType,
 	inferSqlDataType,
 	isPlainNumber,
+	needsQuoting,
 	parseDelimitedLine,
+	quoteIdentifier,
 	sanitizeColumnNames,
 	TIMESTAMP_PATTERN
 } from '../utils/sqlUtils';
@@ -163,6 +165,54 @@ suite('sqlUtils — sanitizeColumnNames', () => {
 
 	test('blank headers get positional names', () => {
 		assert.deepStrictEqual(sanitizeColumnNames(['id', '', '  ']), ['id', 'column2', 'column3']);
+	});
+});
+
+suite('sqlUtils — identifier quoting', () => {
+	test('everyday column names are left bare', () => {
+		// Quoting these is the noise this behaviour exists to remove.
+		for (const name of ['id', 'name', 'type', 'value', 'status', 'count', 'date', 'timestamp', 'my_table']) {
+			assert.strictEqual(needsQuoting(name), false, `${name} should not need quoting`);
+		}
+	});
+
+	test('words that would genuinely break are quoted', () => {
+		for (const name of ['order', 'group', 'select', 'table', 'key', 'user', 'index']) {
+			assert.strictEqual(needsQuoting(name), true, `${name} should need quoting`);
+		}
+	});
+
+	test('reserved words match regardless of case', () => {
+		assert.strictEqual(needsQuoting('ORDER'), true);
+	});
+
+	test('names that are not plain identifiers are quoted', () => {
+		for (const name of ['my table', '2024_rev', 'a-b', 'tbl.name', '']) {
+			assert.strictEqual(needsQuoting(name), true, `${JSON.stringify(name)} should need quoting`);
+		}
+	});
+
+	test('auto leaves a plain name bare in every dialect', () => {
+		for (const dialect of ['spark', 'mysql', 'postgres', 'mssql']) {
+			assert.strictEqual(quoteIdentifier('my_table', dialect), 'my_table', dialect);
+		}
+	});
+
+	test('each dialect uses its own delimiters when quoting is needed', () => {
+		assert.strictEqual(quoteIdentifier('order', 'spark'), '`order`');
+		assert.strictEqual(quoteIdentifier('order', 'mysql'), '`order`');
+		assert.strictEqual(quoteIdentifier('order', 'postgres'), '"order"');
+		assert.strictEqual(quoteIdentifier('order', 'mssql'), '[order]');
+	});
+
+	test('always mode quotes even plain names', () => {
+		assert.strictEqual(quoteIdentifier('my_table', 'spark', 'always'), '`my_table`');
+	});
+
+	test('delimiters embedded in a name are escaped', () => {
+		assert.strictEqual(quoteIdentifier('a`b', 'spark'), '`a``b`');
+		assert.strictEqual(quoteIdentifier('a"b', 'postgres'), '"a""b"');
+		assert.strictEqual(quoteIdentifier('a]b', 'mssql'), '[a]]b]');
 	});
 });
 

@@ -95,7 +95,7 @@ Paste tabular data (auto-detects tab, comma, pipe, or semicolon delimiters) and 
 
 Generates a `CREATE TABLE` statement and `INSERT` rows. Copy the script to your clipboard, or **Open in Editor** to send it to a new SQL tab.
 
-Input is parsed with RFC 4180 quoting, so a field like `"Smith, John"` stays one column. Column names are made into valid, unique SQL identifiers — duplicates are suffixed, names starting with a digit are prefixed, and every dialect quotes its identifiers so reserved words such as `order` are safe.
+Input is parsed with RFC 4180 quoting, so a field like `"Smith, John"` stays one column. Column names are made into valid, unique SQL identifiers — duplicates are suffixed and names starting with a digit are prefixed. Identifiers are quoted only when they need it, so `my_table` stays bare while a reserved word such as `order` is quoted; tick **Always quote identifiers** to quote everything.
 
 **Example input:**
 ```
@@ -149,6 +149,7 @@ These settings apply to the **Convert to CSV Format** command. The panel has its
 | `list-to-csv.quoteAllFields` | `false` | Quote every field, not only those that need it |
 | `list-to-csv.escapeCharacter` | `"` | Quote character used around fields |
 | `list-to-csv.varcharSizing` | `fixed` | `fixed` for `VARCHAR(255)`, or `fromSample` to size columns to the widest sampled value (applies to SQL generation) |
+| `list-to-csv.quoteIdentifiers` | `auto` | `auto` quotes only names that need it; `always` quotes every table and column name (applies to SQL generation) |
 
 Open settings via `Ctrl+Shift+P` → **Data Toolkit: Open Extension Settings**.
 
