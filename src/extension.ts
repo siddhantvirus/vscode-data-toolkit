@@ -9,6 +9,8 @@ import {
     detectSeparator,
     parseDelimitedLine,
     sanitizeColumnNames,
+    quoteIdentifier,
+    IdentifierQuoting,
     VarcharSizing
 } from './utils/sqlUtils';
 import { escapeHtml, escapeRegExp, getNonce } from './utils/htmlUtils';
@@ -771,59 +773,23 @@ function createSqlTableStatement(
 
     // Read fresh rather than storing on the options, so a saved "last used"
     // configuration cannot pin a stale sizing choice.
-    const varcharSizing = vscode.workspace
-        .getConfiguration('list-to-csv')
-        .get<VarcharSizing>('varcharSizing', 'fixed');
+    const config = vscode.workspace.getConfiguration('list-to-csv');
+    const varcharSizing = config.get<VarcharSizing>('varcharSizing', 'fixed');
+    const quoting = config.get<IdentifierQuoting>('quoteIdentifiers', 'auto');
+
+    const quote = (name: string) => quoteIdentifier(name, dialect, quoting);
 
     // Start building the SQL statement
-    let sql = '';
-    
-    // Add CREATE TABLE clause with proper identifier quoting
-    switch (dialect) {
-        case 'mssql':
-            sql = `CREATE TABLE [${tableName}] (\n`;
-            break;
-        case 'mysql':
-            sql = `CREATE TABLE \`${tableName}\` (\n`;
-            break;
-        case 'postgres':
-            sql = `CREATE TABLE "${tableName}" (\n`;
-            break;
-        case 'spark':
-            // Backticks: Spark was the only dialect emitting bare identifiers,
-            // which breaks on reserved words and names starting with a digit.
-            sql = `CREATE TABLE \`${tableName}\` (\n`;
-            break;
-    }
-    
+    let sql = `CREATE TABLE ${quote(tableName)} (\n`;
+
     // Add columns
     for (let i = 0; i < headers.length; i++) {
-        const header = headers[i];
         const dataType = inferDataTypes && sampleData.length > 0
             ? inferSqlDataType(sampleData, i, dialect, varcharSizing)
             : getDefaultDataType(dialect);
-        
-        // Add column definition with proper identifier quoting
-        switch (dialect) {
-            case 'mssql':
-                sql += `    [${header}] ${dataType}`;
-                break;
-            case 'mysql':
-                sql += `    \`${header}\` ${dataType}`;
-                break;
-            case 'postgres':
-                sql += `    "${header}" ${dataType}`;
-                break;
-            case 'spark':
-                sql += `    \`${header}\` ${dataType}`;
-                break;
-        }
-        
-        if (i < headers.length - 1) {
-            sql += ',\n';
-        } else {
-            sql += '\n';
-        }
+
+        sql += `    ${quote(headers[i])} ${dataType}`;
+        sql += i < headers.length - 1 ? ',\n' : '\n';
     }
     
     // Close the statement, then any dialect-specific table options
@@ -840,166 +806,24 @@ function createSqlTableStatement(
     // as more than one statement.
     sql += ';';
     
-    // Add INSERT statements for data
+    // Add INSERT statements for data. Every dialect we emit supports the
+    // multi-row VALUES form, so one code path covers all four — the previous
+    // four near-identical branches differed only in identifier quoting, and
+    // drifted (only postgres terminated its statement).
     if (sampleData.length > 0) {
+        const columnList = headers.map(quote).join(', ');
+        const rows = sampleData.map(row =>
+            '    (' + headers
+                .map((_, j) => formatSqlValue(j < row.length ? row[j] : '', inferDataTypes))
+                .join(', ') + ')'
+        );
+
         sql += '\n\n-- Insert data into table\n';
-        
-        // For batched multi-row inserts, we'll use different approaches based on the dialect
-        switch (dialect) {
-            case 'mssql':
-                // SQL Server doesn't support standard multi-row syntax, but can use table value constructor
-                sql += `INSERT INTO [${tableName}] (`;
-                
-                // Add column names
-                for (let j = 0; j < headers.length; j++) {
-                    sql += `[${headers[j]}]`;
-                    if (j < headers.length - 1) {
-                        sql += ', ';
-                    }
-                }
-                
-                sql += ') VALUES\n';
-                
-                // Add all rows
-                for (let i = 0; i < sampleData.length; i++) {
-                    const row = sampleData[i];
-                    sql += '    (';
-                    
-                    // Add values with proper SQL escaping
-                    for (let j = 0; j < headers.length; j++) {
-                        const value = j < row.length ? row[j] : '';
-                        const formattedValue = formatSqlValue(value, inferDataTypes);
-                        sql += formattedValue;
-                        
-                        if (j < headers.length - 1) {
-                            sql += ', ';
-                        }
-                    }
-                    
-                    sql += ')';
-                    if (i < sampleData.length - 1) {
-                        sql += ',\n';
-                    }
-                }
-                sql += ';\n';
-                break;
-                
-            case 'mysql':
-                // MySQL supports standard multi-row INSERT syntax
-                sql += `INSERT INTO \`${tableName}\` (`;
-                
-                // Add column names
-                for (let j = 0; j < headers.length; j++) {
-                    sql += `\`${headers[j]}\``;
-                    if (j < headers.length - 1) {
-                        sql += ', ';
-                    }
-                }
-                
-                sql += ') VALUES\n';
-                
-                // Add all rows
-                for (let i = 0; i < sampleData.length; i++) {
-                    const row = sampleData[i];
-                    sql += '    (';
-                    
-                    // Add values with proper SQL escaping
-                    for (let j = 0; j < headers.length; j++) {
-                        const value = j < row.length ? row[j] : '';
-                        const formattedValue = formatSqlValue(value, inferDataTypes);
-                        sql += formattedValue;
-                        
-                        if (j < headers.length - 1) {
-                            sql += ', ';
-                        }
-                    }
-                    
-                    sql += ')';
-                    if (i < sampleData.length - 1) {
-                        sql += ',\n';
-                    }
-                }
-                sql += ';\n';
-                break;
-                
-            case 'postgres':
-                // PostgreSQL supports standard multi-row INSERT syntax
-                sql += `INSERT INTO "${tableName}" (`;
-                
-                // Add column names
-                for (let j = 0; j < headers.length; j++) {
-                    sql += `"${headers[j]}"`;
-                    if (j < headers.length - 1) {
-                        sql += ', ';
-                    }
-                }
-                
-                sql += ') VALUES\n';
-                
-                // Add all rows
-                for (let i = 0; i < sampleData.length; i++) {
-                    const row = sampleData[i];
-                    sql += '    (';
-                    
-                    // Add values with proper SQL escaping
-                    for (let j = 0; j < headers.length; j++) {
-                        const value = j < row.length ? row[j] : '';
-                        const formattedValue = formatSqlValue(value, inferDataTypes);
-                        sql += formattedValue;
-                        
-                        if (j < headers.length - 1) {
-                            sql += ', ';
-                        }
-                    }
-                    
-                    sql += ')';
-                    if (i < sampleData.length - 1) {
-                        sql += ',\n';
-                    }
-                }
-                sql += ';\n';
-                break;
-                
-            case 'spark':
-                // Spark SQL supports standard multi-row INSERT syntax
-                sql += `INSERT INTO \`${tableName}\` (`;
-                
-                // Add column names
-                for (let j = 0; j < headers.length; j++) {
-                    sql += `\`${headers[j]}\``;
-                    if (j < headers.length - 1) {
-                        sql += ', ';
-                    }
-                }
-                
-                sql += ') VALUES\n';
-                
-                // Add all rows
-                for (let i = 0; i < sampleData.length; i++) {
-                    const row = sampleData[i];
-                    sql += '    (';
-                    
-                    // Add values with proper SQL escaping
-                    for (let j = 0; j < headers.length; j++) {
-                        const value = j < row.length ? row[j] : '';
-                        const formattedValue = formatSqlValue(value, inferDataTypes);
-                        sql += formattedValue;
-                        
-                        if (j < headers.length - 1) {
-                            sql += ', ';
-                        }
-                    }
-                    
-                    sql += ')';
-                    if (i < sampleData.length - 1) {
-                        sql += ',\n';
-                    }
-                }
-                sql += ';\n';
-                break;
-        }
+        sql += `INSERT INTO ${quote(tableName)} (${columnList}) VALUES\n`;
+        sql += rows.join(',\n');
+        sql += ';\n';
     }
-    
+
     return sql;
 }
 

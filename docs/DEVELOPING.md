@@ -103,6 +103,9 @@ The webview script is a string and cannot import a module, so these pairs are ha
 | `detectSep` | `detectSeparator` |
 | `parseDelimitedLine` | `parseDelimitedLine` |
 | `sanitizeColumnNames` | `sanitizeColumnNames` |
+| `needsQuoting` | `needsQuoting` |
+| `quoteId` | `quoteIdentifier` |
+| `RESERVED_WORDS` | `RESERVED_WORDS` |
 | `isPlainNumber` | `isPlainNumber` |
 
 Consolidating them is tracked in [ROADMAP.md](../ROADMAP.md).

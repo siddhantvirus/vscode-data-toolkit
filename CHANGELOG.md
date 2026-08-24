@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.2] — 2026-08-21
+
+Pre-release.
+
+### Fixed
+
+- **Identifiers were quoted unconditionally.** Every table and column name was wrapped in the dialect's delimiters, even a plain `my_table` that needs nothing. Reported against Spark SQL in a Microsoft Fabric Lakehouse, where the backticks ended up part of the table name so it could not be queried without them. Names are now quoted only when they need it — anything outside `[A-Za-z_][A-Za-z0-9_]*`, or a SQL keyword such as `order`, `group`, `key` or `user`. Set `list-to-csv.quoteIdentifiers` to `always`, or tick **Always quote identifiers** on the SQL Builder tab, to restore the previous behaviour.
+- This also stops PostgreSQL producing case-sensitive identifiers by default: `"Region"` had to be written quoted in every later query, whereas bare `Region` folds to `region`.
+- **The Always quote setting did not apply to the table name** in the panel — the value was read after the table name had already been quoted, so it silently used the default.
+
+### Changed
+
+- The four near-identical `INSERT` branches in `createSqlTableStatement` are now one code path. They differed only in identifier quoting and had already drifted apart once — that duplication is what let the missing statement terminators survive in three dialects.
+
+### Added
+
+- `list-to-csv.quoteIdentifiers` setting (`auto` / `always`) and a matching **Always quote identifiers** checkbox on the SQL Builder tab.
+
+---
+
 ## [1.1.1] — 2026-08-18
 
 Pre-release.

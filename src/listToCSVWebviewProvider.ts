@@ -435,6 +435,7 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
             <div class="checkbox-row"><input type="checkbox" id="sqlHeaders" checked><label for="sqlHeaders">First row is headers</label></div>
             <div class="checkbox-row"><input type="checkbox" id="sqlInferTypes" checked><label for="sqlInferTypes">Auto-detect column types</label></div>
             <div class="checkbox-row"><input type="checkbox" id="sqlSizeVarchar"><label for="sqlSizeVarchar" title="Off: VARCHAR(255). On: sized to the widest pasted value — tighter, but can truncate data outside the sample.">Size VARCHAR to sample</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="sqlAlwaysQuote"><label for="sqlAlwaysQuote" title="Off: only names that need it are quoted. On: every table and column name is quoted.">Always quote identifiers</label></div>
         </div>
         <div class="option-card">
             <h4>Generate</h4>
@@ -760,13 +761,35 @@ function fmtSqlVal(v, infer) {
     return "'" + v.replace(/'/g, "''") + "'";
 }
 
-function quoteId(name, dialect) {
+/* Mirrors needsQuoting / quoteIdentifier in src/utils/sqlUtils.ts. */
+var PLAIN_IDENTIFIER_RX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+var RESERVED_WORDS = new Set([
+    'add','all','alter','and','any','as','asc','begin','between','by','case',
+    'cast','check','column','commit','constraint','create','cross','current',
+    'database','default','delete','desc','distinct','drop','else','end','except',
+    'exists','external','false','for','foreign','from','full','function','grant',
+    'group','having','if','in','index','inner','insert','intersect','interval',
+    'into','is','join','key','left','like','limit','merge','natural','not',
+    'null','offset','on','or','order','outer','over','partition','primary',
+    'procedure','range','references','rename','replace','right','rollback','row',
+    'rows','schema','select','set','show','some','table','temporary','then','to',
+    'top','transaction','trigger','true','union','unique','update','use','user',
+    'using','values','view','when','where','window','with'
+]);
+
+function needsQuoting(name) {
+    return !PLAIN_IDENTIFIER_RX.test(name) || RESERVED_WORDS.has(String(name).toLowerCase());
+}
+
+/* Quoting a plain name like my_table is unnecessary, and downstream tools do
+   not always strip the quotes again — the name can end up carrying them. */
+function quoteId(name, dialect, always) {
+    if (!always && !needsQuoting(name)) { return name; }
     switch (dialect) {
-        case 'mssql':    return '[' + name + ']';
-        case 'postgres': return '"' + name + '"';
-        /* mysql and spark both use backticks. Spark previously emitted bare
-           identifiers, which breaks on reserved words and leading digits. */
-        default:         return '\`' + name + '\`';
+        case 'mssql':    return '[' + String(name).replace(/]/g, ']]') + ']';
+        case 'postgres': return '"' + String(name).replace(/"/g, '""') + '"';
+        /* mysql and spark both delimit with backticks */
+        default:         return '\`' + String(name).replace(/\`/g, '\`\`') + '\`';
     }
 }
 
@@ -818,13 +841,17 @@ function generateSQL() {
     if (!lines.length) { showStatus('sqlStatus', 'No data found.', false); return; }
 
     var dialect  = document.getElementById('sqlDialect').value;
-    var tblRaw   = document.getElementById('sqlTable').value.trim() || 'my_table';
-    var tbl      = quoteId(tblRaw, dialect);
     var hasHdr   = document.getElementById('sqlHeaders').checked;
     var infer    = document.getElementById('sqlInferTypes').checked;
     var genCre   = document.getElementById('sqlGenCreate').checked;
     var genIns   = document.getElementById('sqlGenInsert').checked;
     var sizeVar  = document.getElementById('sqlSizeVarchar').checked;
+    var alwaysQ  = document.getElementById('sqlAlwaysQuote').checked;
+
+    /* Read alwaysQ before quoting: with var hoisting, computing tbl above this
+       point silently saw undefined and ignored the setting. */
+    var tblRaw   = document.getElementById('sqlTable').value.trim() || 'my_table';
+    var tbl      = quoteId(tblRaw, dialect, alwaysQ);
 
     var sep = detectSep(lines[0]);
     var headers, dataRows;
@@ -851,7 +878,7 @@ function generateSQL() {
         headers.forEach(function(h, i) {
             var colVals = dataRows.map(function(r) { return i < r.length ? r[i] : ''; }).filter(function(v) { return v !== ''; });
             var type = infer ? inferType(colVals, dialect, sizeVar) : getDefaultType(dialect);
-            sql += '    ' + quoteId(h, dialect) + ' ' + type;
+            sql += '    ' + quoteId(h, dialect, alwaysQ) + ' ' + type;
             sql += i < headers.length - 1 ? ',\\n' : '\\n';
         });
         sql += ')';
@@ -863,7 +890,7 @@ function generateSQL() {
     }
 
     if (genIns && dataRows.length) {
-        var colList = headers.map(function(h) { return quoteId(h, dialect); }).join(', ');
+        var colList = headers.map(function(h) { return quoteId(h, dialect, alwaysQ); }).join(', ');
         sql += '\\nINSERT INTO ' + tbl + ' (' + colList + ') VALUES\\n';
         sql += dataRows.map(function(row) {
             var vals = headers.map(function(_, ci) {

@@ -144,6 +144,79 @@ export function formatSqlValue(value: string, inferDataTypes: boolean): string {
  * @param dialect The SQL dialect
  * @returns The default data type for the dialect
  */
+/**
+ * Whether identifiers are quoted unconditionally or only when they need it.
+ *
+ * `auto` is the default. Quoting a plain name like `my_table` is unnecessary,
+ * and downstream tools do not always strip the quotes again — a name can end
+ * up carrying them literally. Quoting also changes semantics on PostgreSQL,
+ * where `"Region"` is case-sensitive forever while bare `Region` folds to
+ * `region`.
+ */
+export type IdentifierQuoting = 'auto' | 'always';
+
+/** A name usable bare in every dialect we emit. */
+const PLAIN_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Words that must be quoted when used as an identifier.
+ *
+ * Not an exhaustive reserved-word list for any one dialect — that runs to
+ * hundreds of entries and would bloat the bundle. It deliberately excludes
+ * words that are merely *keywords* but legal as bare identifiers in all four
+ * dialects — `name`, `type`, `value`, `status`, `count`, `date`, `timestamp`
+ * and friends. Those are among the most common spreadsheet headers, and
+ * quoting them is the noise this change exists to remove. `key` and `user`
+ * stay because MySQL and PostgreSQL genuinely reject them unquoted.
+ */
+const RESERVED_WORDS = new Set([
+    'add', 'all', 'alter', 'and', 'any', 'as', 'asc', 'begin', 'between', 'by', 'case',
+    'cast', 'check', 'column', 'commit', 'constraint', 'create', 'cross', 'current',
+    'database', 'default', 'delete', 'desc', 'distinct', 'drop', 'else', 'end', 'except',
+    'exists', 'external', 'false', 'for', 'foreign', 'from', 'full', 'function', 'grant',
+    'group', 'having', 'if', 'in', 'index', 'inner', 'insert', 'intersect', 'interval',
+    'into', 'is', 'join', 'key', 'left', 'like', 'limit', 'merge', 'natural', 'not',
+    'null', 'offset', 'on', 'or', 'order', 'outer', 'over', 'partition', 'primary',
+    'procedure', 'range', 'references', 'rename', 'replace', 'right', 'rollback', 'row',
+    'rows', 'schema', 'select', 'set', 'show', 'some', 'table', 'temporary', 'then', 'to',
+    'top', 'transaction', 'trigger', 'true', 'union', 'unique', 'update', 'use', 'user',
+    'using', 'values', 'view', 'when', 'where', 'window', 'with'
+]);
+
+/**
+ * Whether a name has to be quoted to be a valid, unambiguous identifier.
+ */
+export function needsQuoting(name: string): boolean {
+    return !PLAIN_IDENTIFIER_PATTERN.test(name) || RESERVED_WORDS.has(name.toLowerCase());
+}
+
+/**
+ * Quote an identifier for a dialect.
+ *
+ * @param quoting `auto` quotes only names that require it; `always` quotes
+ * everything, which is what every dialect did before and remains available for
+ * anyone who prefers it.
+ */
+export function quoteIdentifier(
+    name: string,
+    dialect: string,
+    quoting: IdentifierQuoting = 'auto'
+): string {
+    if (quoting === 'auto' && !needsQuoting(name)) {
+        return name;
+    }
+
+    switch (dialect) {
+        case 'mssql':
+            return `[${name.replace(/]/g, ']]')}]`;
+        case 'postgres':
+            return `"${name.replace(/"/g, '""')}"`;
+        // MySQL and Spark SQL both delimit with backticks.
+        default:
+            return `\`${name.replace(/`/g, '``')}\``;
+    }
+}
+
 export function getDefaultDataType(dialect: string): string {
     switch (dialect) {
         case 'mssql': return 'VARCHAR(255)';
