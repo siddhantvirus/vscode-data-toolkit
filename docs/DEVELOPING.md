@@ -102,6 +102,7 @@ The webview script is a string and cannot import a module, so these pairs are ha
 | `fmtSqlVal` | `formatSqlValue` |
 | `detectSep` | `detectSeparator` |
 | `parseDelimitedLine` | `parseDelimitedLine` |
+| `parseDelimitedText` | `parseDelimitedText` |
 | `sanitizeColumnNames` | `sanitizeColumnNames` |
 | `needsQuoting` | `needsQuoting` |
 | `quoteId` | `quoteIdentifier` |
@@ -114,7 +115,7 @@ Consolidating them is tracked in [ROADMAP.md](../ROADMAP.md).
 
 `parseDelimitedLine` implements RFC 4180 quoting for single-character delimiters — a field like `"Smith, John"` stays one column, and `""` inside a quoted field is an escaped quote. Space-aligned columns use a RegExp separator, which has no quoting convention, so those fall back to a plain split.
 
-It is **line-scoped**: a quoted field containing a newline is not supported, because both pipelines split on lines before parsing fields. Fixing that means parsing the whole document first.
+`parseDelimitedText` parses a whole document rather than a line at a time, so quoting is honoured across newlines and a quoted field containing one survives intact. Both SQL pipelines use it. `parseDelimitedLine` remains for single-line callers and for the RegExp-separator fallback, where space-aligned columns have no quoting convention.
 
 `sanitizeColumnNames` guarantees identifiers that every dialect accepts: punctuation collapsed to single underscores, leading digits prefixed with `col_`, blanks named positionally, and duplicates suffixed case-insensitively.
 

@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.3] — 2026-08-25
+
+Pre-release.
+
+### Fixed
+
+- **A quoted field containing a newline broke parsing.** Both SQL pipelines split the input into lines before parsing fields, so a value like `"line one⏎line two"` was torn into separate rows and every column after it shifted. Parsing now runs over the whole document, honouring RFC 4180 quoting across line breaks. This was the last open Tier 1 correctness gap, and it blocked the format-interop work: CSV → JSON, extract-column-N and transpose would all have inherited the defect.
+
+### Changed
+
+- `ROADMAP.md` restructured around a four-phase build order, merging the reviewed feature proposal. New transforms will be surfaced behind a single **Transform…** quick-pick rather than one command each — the extension already contributes 9 commands and a 6-item submenu, and a command per transform would take it past 40. Items considered and deliberately dropped are recorded with reasons so they are not re-proposed.
+
+---
+
 ## [1.1.2] — 2026-08-21
 
 Pre-release.

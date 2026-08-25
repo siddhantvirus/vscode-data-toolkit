@@ -7,7 +7,7 @@ import {
     getDefaultDataType,
     inferSqlDataType,
     detectSeparator,
-    parseDelimitedLine,
+    parseDelimitedText,
     sanitizeColumnNames,
     quoteIdentifier,
     IdentifierQuoting,
@@ -848,8 +848,13 @@ function parseSqlTabularData(text: string, hasHeaders: boolean = true): { header
     let dataLines: string[][] = [];
 
     if (separator) {
-        // Quote-aware so that a field such as "Smith, John" stays one column.
-        const rows = lines.map(line => parseDelimitedLine(line, separator));
+        // Parse the whole document, not line by line: quoting is honoured
+        // across newlines, so a quoted field containing one stays intact.
+        const rows = parseDelimitedText(text, separator);
+
+        if (rows.length === 0) {
+            throw new Error('No valid data found');
+        }
 
         if (hasHeaders) {
             headers = rows[0];
