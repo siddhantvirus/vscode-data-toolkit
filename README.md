@@ -19,6 +19,7 @@ A VS Code extension built for data engineers. Convert lists, build SQL scripts, 
 | Count value occurrences (GROUP BY) | Right-click selection → Data Toolkit |
 | Remove duplicate lines | Right-click selection → Data Toolkit |
 | Compare two columns (set operations) | Right-click selection → Data Toolkit |
+| Diff two tables by key (added / removed / changed) | Webview → Compare tab → Rows |
 | Generate SQL CREATE TABLE + INSERTs | Webview → SQL Builder tab |
 | Build Excel formulas with live preview | Webview → Excel Formulas tab |
 
@@ -83,6 +84,17 @@ Paste two lists (one per column) and choose a set operation:
 | Only in B | Values present in Column B but not Column A |
 
 All three result sets are shown side by side with counts, and each has its own copy button. **Case-sensitive** and **Trim whitespace** options control how values are matched.
+
+**Rows (tabular) mode** compares two tables instead of two lists. Paste tabular data with a header row into each side; rows are matched on a key column (auto-selected, overridable) and classified as added, removed, changed or unchanged, with the differing fields highlighted inline as `before → after`.
+
+| | Meaning |
+|---|---|
+| `+` | Row only in B |
+| `−` | Row only in A |
+| `~` | Same key, at least one field differs |
+| `=` | Identical — hidden unless **Show unchanged rows** is ticked |
+
+Columns are matched by header name, so reordering them is not treated as a change. Duplicate keys and columns present on only one side are reported as warnings rather than silently affecting the result.
 
 ### Tab 4 — SQL Builder
 

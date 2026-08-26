@@ -15,6 +15,7 @@ import {
 	TIMESTAMP_PATTERN
 } from '../utils/sqlUtils';
 import { escapeHtml, escapeRegExp, getNonce } from '../utils/htmlUtils';
+import { diffRows, suggestKeyColumn } from '../utils/diffUtils';
 
 suite('sqlUtils — isPlainNumber', () => {
 	test('accepts plain integers and decimals', () => {
@@ -279,6 +280,73 @@ suite('sqlUtils — timestamp recognition', () => {
 	test('non-timestamps are not matched', () => {
 		assert.strictEqual(TIMESTAMP_PATTERN.test('not a date'), false);
 		assert.strictEqual(TIMESTAMP_PATTERN.test('2024-03-15'), false);
+	});
+});
+
+suite('diffUtils — diffRows', () => {
+	const A = [['id', 'status', 'amount'], ['1', 'active', '100'], ['2', 'closed', '200'], ['3', 'active', '300']];
+	const B = [['id', 'status', 'amount'], ['1', 'active', '100'], ['2', 'active', '200'], ['4', 'new', '400']];
+
+	test('classifies added, removed, changed and unchanged', () => {
+		assert.deepStrictEqual(diffRows(A, B, 'id').counts, { added: 1, removed: 1, changed: 1, unchanged: 1 });
+	});
+
+	test('reports which field changed, not just that the row differs', () => {
+		const changed = diffRows(A, B, 'id').rows.find(r => r.status === 'changed');
+		assert.strictEqual(changed?.key, '2');
+		assert.deepStrictEqual(changed?.changes, [{ column: 'status', before: 'closed', after: 'active' }]);
+	});
+
+	test('columns are matched by name, so order does not matter', () => {
+		const reordered = [['amount', 'id', 'status'], ['100', '1', 'active'], ['200', '2', 'active'], ['400', '4', 'new']];
+		assert.deepStrictEqual(diffRows(A, reordered, 'id').counts, { added: 1, removed: 1, changed: 1, unchanged: 1 });
+	});
+
+	test('duplicate keys warn rather than silently resolving', () => {
+		const result = diffRows([['id', 'v'], ['1', 'a'], ['1', 'b']], [['id', 'v'], ['1', 'a']], 'id');
+		assert.ok(result.warnings.some(w => /duplicate key/i.test(w)), result.warnings.join('; '));
+	});
+
+	test('a column on one side only is a warning, not every row changing', () => {
+		const withExtra = [['id', 'status', 'amount', 'region'], ['1', 'active', '100', 'EU'], ['2', 'closed', '200', 'US'], ['3', 'active', '300', 'EU']];
+		const result = diffRows(A, withExtra, 'id');
+		assert.strictEqual(result.counts.changed, 0);
+		assert.ok(result.warnings.some(w => /only in B/.test(w)), result.warnings.join('; '));
+	});
+
+	test('case and trim options are honoured', () => {
+		const x = [['id', 'v'], ['1', 'Active']];
+		const y = [['id', 'v'], ['1', ' active ']];
+		assert.strictEqual(diffRows(x, y, 'id', { caseSensitive: true, trim: true }).counts.changed, 1);
+		assert.strictEqual(diffRows(x, y, 'id', { caseSensitive: false, trim: true }).counts.changed, 0);
+	});
+
+	test('a missing key column is reported rather than thrown', () => {
+		const result = diffRows(A, B, 'nope');
+		assert.strictEqual(result.rows.length, 0);
+		assert.ok(result.warnings[0].includes('not present'));
+	});
+});
+
+suite('diffUtils — suggestKeyColumn', () => {
+	test('picks the leftmost column unique on both sides', () => {
+		const a = [['id', 'v'], ['1', 'x'], ['2', 'y']];
+		assert.strictEqual(suggestKeyColumn(a, a), 'id');
+	});
+
+	test('skips a column with repeated values', () => {
+		const a = [['a', 'b'], ['1', 'x'], ['1', 'y']];
+		assert.strictEqual(suggestKeyColumn(a, a), 'b');
+	});
+
+	test('a blank value disqualifies a column', () => {
+		const a = [['a', 'b'], ['', 'x'], ['2', 'y']];
+		assert.strictEqual(suggestKeyColumn(a, a), 'b');
+	});
+
+	test('returns null when nothing qualifies, rather than guessing', () => {
+		const a = [['a', 'b'], ['1', 'x'], ['1', 'x']];
+		assert.strictEqual(suggestKeyColumn(a, a), null);
 	});
 });
 

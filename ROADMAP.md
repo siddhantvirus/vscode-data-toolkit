@@ -155,6 +155,10 @@ All behind the `Transform…` quick-pick, operating in place on a selection.
 ### Compare and Count depth
 
 - **Compare more than two columns** — extend the set operations beyond A vs B.
+- ~~Row-level comparison~~ — **done in 1.1.4** as a Rows mode on the Compare tab:
+  keyed diff with added/removed/changed/unchanged, per-field change highlighting,
+  and warnings for duplicate keys and schema drift. Follow-ups: composite keys,
+  and emitting `UPDATE` statements for changed rows (Phase 3).
 - **Duplicates within a single column** — report which values repeat and how
   often, rather than removing them.
 

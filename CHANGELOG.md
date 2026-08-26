@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.4] — 2026-08-26
+
+Pre-release.
+
+### Added
+
+- **Row comparison on the Compare tab.** A **Values / Rows** toggle switches between the existing value set-operations and a keyed row diff for tabular data.
+
+  Set operations over whole rows cannot express *changed* — a row with one altered field appears in both "Only in A" and "Only in B", which is true but useless. Matching rows by key gives a fourth outcome and reports the specific fields that differ:
+
+  - **Added**, **Removed**, **Changed** and **Unchanged**, with a count for each
+  - Changed cells highlighted inline as `before → after`; unchanged rows hidden by default
+  - Status carried by a `+` `−` `~` glyph as well as colour, so it does not rely on colour alone
+  - Columns matched by **header name**, so reordering columns is not read as every row changing
+  - The key column is picked automatically — the leftmost column unique on both sides — and can be overridden
+  - **Duplicate keys** are reported rather than silently resolved, since they make the pairing ambiguous
+  - **Schema drift** (a column on one side only) is reported as a warning instead of marking every row changed
+
+---
+
 ## [1.1.3] — 2026-08-25
 
 Pre-release.

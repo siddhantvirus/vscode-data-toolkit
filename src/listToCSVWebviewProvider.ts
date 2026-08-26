@@ -237,6 +237,53 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
 .card-only-a .result-card-head { border-left: 3px solid #e06c75; }
 .card-common  .result-card-head { border-left: 3px solid #98c379; }
 .card-only-b  .result-card-head { border-left: 3px solid #61afef; }
+
+/* ── Row diff ────────────────────────────────────── */
+.mode-bar { display: flex; gap: 6px; margin-bottom: 12px; }
+.mode-btn {
+    padding: 4px 12px; border-radius: 12px; border: 1px solid var(--vscode-panel-border);
+    background: transparent; cursor: pointer; font-size: 12px;
+    color: var(--vscode-foreground); font-family: var(--vscode-font-family);
+}
+.mode-btn.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }
+
+.diff-summary { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; margin: 12px 0 8px; }
+.diff-stat { display: flex; align-items: center; gap: 5px; }
+.diff-chip {
+    display: inline-block; width: 16px; text-align: center; border-radius: 3px;
+    font-weight: 700; font-size: 11px; line-height: 16px;
+}
+.chip-added    { background: rgba(152,195,121,.22); color: #98c379; }
+.chip-removed  { background: rgba(224,108,117,.22); color: #e06c75; }
+.chip-changed  { background: rgba(229,192,123,.22); color: #e5c07b; }
+.chip-unchanged{ background: var(--vscode-panel-background); opacity: .7; }
+
+.diff-warning {
+    font-size: 11px; padding: 6px 10px; border-radius: var(--r); margin-bottom: 6px;
+    background: rgba(229,192,123,.10); border-left: 3px solid #e5c07b;
+}
+
+.diff-scroll { overflow-x: auto; max-height: 420px; overflow-y: auto; border: 1px solid var(--vscode-panel-border); border-radius: var(--r); }
+table.diff { border-collapse: collapse; width: 100%; font-size: 12px; font-family: var(--vscode-editor-font-family); }
+table.diff th, table.diff td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--vscode-panel-border); white-space: nowrap; }
+table.diff th {
+    position: sticky; top: 0; z-index: 1; font-family: var(--vscode-font-family);
+    background: var(--vscode-panel-background); font-size: 11px; text-transform: uppercase; opacity: .75;
+}
+table.diff td.status { width: 1%; font-weight: 700; text-align: center; }
+/* Status is carried by a glyph as well as colour, so it does not rely on colour alone. */
+tr.row-added   td.status { color: #98c379; }
+tr.row-removed td.status { color: #e06c75; }
+tr.row-changed td.status { color: #e5c07b; }
+tr.row-added   { background: rgba(152,195,121,.07); }
+tr.row-removed { background: rgba(224,108,117,.07); }
+tr.row-changed { background: rgba(229,192,123,.07); }
+tr.row-unchanged { opacity: .55; }
+td.cell-changed { background: rgba(229,192,123,.16); }
+.val-before { color: #e06c75; text-decoration: line-through; opacity: .8; }
+.val-arrow  { opacity: .5; margin: 0 4px; }
+.val-after  { color: #98c379; }
+.diff-truncated { font-size: 11px; opacity: .7; padding: 6px 10px; }
 .result-card-count { opacity: .65; font-weight: 400; }
 .result-card-body { max-height: 220px; overflow-y: auto; padding: 6px 10px; font-size: 12px; font-family: var(--vscode-editor-font-family); }
 .result-item { padding: 2px 0; border-bottom: 1px solid var(--vscode-panel-border); word-break: break-all; }
@@ -372,13 +419,17 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
 
 <!-- ═══ TAB 3: COMPARE COLUMNS ══════════════════════════════ -->
 <div id="tab-compare" class="tab-content">
+    <div class="mode-bar">
+        <button class="mode-btn active" data-cmpmode="values">Values</button>
+        <button class="mode-btn" data-cmpmode="rows">Rows (tabular)</button>
+    </div>
     <div class="two-col">
         <div class="field">
-            <label for="compareColA">Column A:</label>
+            <label for="compareColA" id="labelColA">Column A:</label>
             <textarea id="compareColA" rows="9" placeholder="Paste values (one per line)..."></textarea>
         </div>
         <div class="field">
-            <label for="compareColB">Column B:</label>
+            <label for="compareColB" id="labelColB">Column B:</label>
             <textarea id="compareColB" rows="9" placeholder="Paste values (one per line)..."></textarea>
         </div>
     </div>
@@ -388,10 +439,21 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
             <div class="checkbox-row"><input type="checkbox" id="cmpCase" checked><label for="cmpCase">Case-sensitive</label></div>
             <div class="checkbox-row"><input type="checkbox" id="cmpTrim" checked><label for="cmpTrim">Trim whitespace</label></div>
         </div>
+        <div class="option-card hidden" id="cmpRowOptions">
+            <h4>Match rows on</h4>
+            <div class="field" style="margin-bottom:6px">
+                <select id="cmpKey"><option value="">Load data to pick a key…</option></select>
+            </div>
+            <div class="checkbox-row"><input type="checkbox" id="cmpShowUnchanged"><label for="cmpShowUnchanged">Show unchanged rows</label></div>
+        </div>
     </div>
     <div class="btn-row">
         <button data-action="doCompare">Compare</button>
     </div>
+    <div id="diffWarnings"></div>
+    <div id="diffSummary" class="diff-summary hidden"></div>
+    <div id="diffResults" class="hidden"></div>
+    <div id="compareStatus" class="status-box hidden"></div>
     <div id="compareResults" class="three-col hidden">
         <div class="result-card card-only-a">
             <div class="result-card-head"><span>Only in A</span><span class="result-card-count" id="cntA">0</span></div>
@@ -629,7 +691,237 @@ function copyAnalyze() {
 /* ═══ TAB 3: COMPARE COLUMNS ════════════════════════════════ */
 var compareData = { A: [], common: [], B: [] };
 
+/* ── Row diff ───────────────────────────────────── */
+/* Mirrors diffRows / suggestKeyColumn in src/utils/diffUtils.ts. */
+var cmpMode = 'values';
+
+function setCompareMode(mode) {
+    cmpMode = mode;
+    document.querySelectorAll('.mode-btn').forEach(function(b) {
+        b.classList.toggle('active', b.getAttribute('data-cmpmode') === mode);
+    });
+    var rowsMode = mode === 'rows';
+    document.getElementById('cmpRowOptions').classList.toggle('hidden', !rowsMode);
+    document.getElementById('labelColA').textContent = rowsMode ? 'Table A (with header row):' : 'Column A:';
+    document.getElementById('labelColB').textContent = rowsMode ? 'Table B (with header row):' : 'Column B:';
+    var ph = rowsMode ? 'Paste tabular data, first row is the header...' : 'Paste values (one per line)...';
+    document.getElementById('compareColA').placeholder = ph;
+    document.getElementById('compareColB').placeholder = ph;
+
+    /* Only one result view is meaningful at a time. */
+    document.getElementById('compareResults').classList.add('hidden');
+    document.getElementById('diffResults').classList.add('hidden');
+    document.getElementById('diffSummary').classList.add('hidden');
+    document.getElementById('diffWarnings').innerHTML = '';
+    hideStatus('compareStatus');
+
+    if (rowsMode) { refreshKeyOptions(); }
+}
+
+function readTable(id) {
+    var raw = document.getElementById(id).value;
+    if (!raw.trim()) { return null; }
+    var firstLine = raw.split(/\\r?\\n/)[0];
+    var sep = detectSep(firstLine);
+    if (!sep) { return null; }
+    var rows = parseDelimitedText(raw, sep);
+    return rows.length ? rows : null;
+}
+
+/* Populate the key dropdown from the shared headers, pre-selecting a column
+   that is unique on both sides so the common case needs no interaction. */
+function refreshKeyOptions() {
+    var select = document.getElementById('cmpKey');
+    var a = readTable('compareColA');
+    var b = readTable('compareColB');
+    if (!a || !b) {
+        select.innerHTML = '<option value="">Load data to pick a key…</option>';
+        return;
+    }
+    var shared = a[0].filter(function(h) { return b[0].indexOf(h) !== -1; });
+    if (!shared.length) {
+        select.innerHTML = '<option value="">No shared columns</option>';
+        return;
+    }
+    var previous = select.value;
+    var suggested = suggestKeyColumn(a, b);
+    select.innerHTML = shared.map(function(h) {
+        return '<option value="' + escHtml(h) + '">' + escHtml(h) + '</option>';
+    }).join('');
+    select.value = shared.indexOf(previous) !== -1 ? previous : (suggested || shared[0]);
+}
+
+function isUniqueKey(records, column) {
+    var seen = Object.create(null);
+    for (var i = 0; i < records.length; i++) {
+        var v = String(records[i][column] == null ? '' : records[i][column]).trim();
+        if (v === '' || seen[v]) { return false; }
+        seen[v] = true;
+    }
+    return records.length > 0;
+}
+
+function toRecords(table) {
+    var headers = table.length ? table[0] : [];
+    var records = table.slice(1).map(function(row) {
+        var rec = {};
+        headers.forEach(function(h, i) { rec[h] = i < row.length ? row[i] : ''; });
+        return rec;
+    });
+    return { headers: headers, records: records };
+}
+
+function suggestKeyColumn(tableA, tableB) {
+    var a = toRecords(tableA), b = toRecords(tableB);
+    var shared = a.headers.filter(function(h) { return b.headers.indexOf(h) !== -1; });
+    for (var i = 0; i < shared.length; i++) {
+        if (isUniqueKey(a.records, shared[i]) && isUniqueKey(b.records, shared[i])) { return shared[i]; }
+    }
+    return null;
+}
+
+function diffRows(tableA, tableB, keyColumn, opts) {
+    var cs = opts.caseSensitive !== false, tr = opts.trim !== false;
+    function norm(v) {
+        var s = v == null ? '' : String(v);
+        if (tr) { s = s.trim(); }
+        if (!cs) { s = s.toLowerCase(); }
+        return s;
+    }
+    var a = toRecords(tableA), b = toRecords(tableB), warnings = [];
+    if (a.headers.indexOf(keyColumn) === -1 || b.headers.indexOf(keyColumn) === -1) {
+        return { rows: [], counts: { added:0, removed:0, changed:0, unchanged:0 }, columns: [],
+                 warnings: ['Key column "' + keyColumn + '" is not present in both tables.'] };
+    }
+    var onlyA = a.headers.filter(function(h) { return b.headers.indexOf(h) === -1; });
+    var onlyB = b.headers.filter(function(h) { return a.headers.indexOf(h) === -1; });
+    if (onlyA.length) { warnings.push('Column' + (onlyA.length>1?'s':'') + ' only in A: ' + onlyA.join(', ') + ' — not compared.'); }
+    if (onlyB.length) { warnings.push('Column' + (onlyB.length>1?'s':'') + ' only in B: ' + onlyB.join(', ') + ' — not compared.'); }
+
+    var compared = a.headers.filter(function(h) { return h !== keyColumn && b.headers.indexOf(h) !== -1; });
+
+    function index(records, side) {
+        var map = new Map(), dups = new Set();
+        records.forEach(function(rec) {
+            var k = norm(rec[keyColumn]);
+            if (map.has(k)) { dups.add(k); }
+            map.set(k, rec);
+        });
+        if (dups.size) {
+            var list = Array.from(dups).slice(0,3).join(', ');
+            warnings.push(dups.size + ' duplicate key' + (dups.size>1?'s':'') + ' in ' + side +
+                ' (' + list + (dups.size>3?', …':'') + ') — only the last row for each was compared.');
+        }
+        return map;
+    }
+    var mapA = index(a.records, 'A'), mapB = index(b.records, 'B');
+
+    var counts = { added:0, removed:0, changed:0, unchanged:0 }, rows = [], keys = [];
+    mapA.forEach(function(_, k) { keys.push(k); });
+    mapB.forEach(function(_, k) { if (!mapA.has(k)) { keys.push(k); } });
+
+    keys.forEach(function(k) {
+        var before = mapA.get(k), after = mapB.get(k);
+        var display = (before || after)[keyColumn];
+        if (before && !after) { counts.removed++; rows.push({key:display,status:'removed',before:before,changes:[]}); return; }
+        if (!before && after) { counts.added++; rows.push({key:display,status:'added',after:after,changes:[]}); return; }
+        var changes = [];
+        compared.forEach(function(col) {
+            var bv = before[col] == null ? '' : before[col];
+            var av = after[col] == null ? '' : after[col];
+            if (norm(bv) !== norm(av)) { changes.push({column:col, before:bv, after:av}); }
+        });
+        if (changes.length) { counts.changed++; rows.push({key:display,status:'changed',before:before,after:after,changes:changes}); }
+        else { counts.unchanged++; rows.push({key:display,status:'unchanged',before:before,after:after,changes:[]}); }
+    });
+
+    return { rows: rows, counts: counts, columns: [keyColumn].concat(compared), warnings: warnings };
+}
+
+var DIFF_ROW_LIMIT = 300;
+
+function renderDiff(result, keyColumn, showUnchanged) {
+    var warnBox = document.getElementById('diffWarnings');
+    warnBox.innerHTML = result.warnings.map(function(w) {
+        return '<div class="diff-warning">' + escHtml(w) + '</div>';
+    }).join('');
+
+    var c = result.counts;
+    var summary = document.getElementById('diffSummary');
+    summary.innerHTML =
+        stat('chip-added','+', c.added, 'added') +
+        stat('chip-removed','−', c.removed, 'removed') +
+        stat('chip-changed','~', c.changed, 'changed') +
+        stat('chip-unchanged','=', c.unchanged, 'unchanged');
+    summary.classList.remove('hidden');
+
+    var visible = result.rows.filter(function(r) { return showUnchanged || r.status !== 'unchanged'; });
+    var shown = visible.slice(0, DIFF_ROW_LIMIT);
+    var glyph = { added:'+', removed:'−', changed:'~', unchanged:'=' };
+
+    var head = '<tr><th></th>' + result.columns.map(function(col) {
+        return '<th>' + escHtml(col) + (col === keyColumn ? ' · key' : '') + '</th>';
+    }).join('') + '</tr>';
+
+    var body = shown.map(function(r) {
+        var cells = result.columns.map(function(col) {
+            var change = r.changes.filter(function(ch) { return ch.column === col; })[0];
+            if (change) {
+                return '<td class="cell-changed"><span class="val-before">' + escHtml(change.before) +
+                       '</span><span class="val-arrow">→</span><span class="val-after">' +
+                       escHtml(change.after) + '</span></td>';
+            }
+            var source = r.after || r.before || {};
+            return '<td>' + escHtml(source[col] == null ? '' : source[col]) + '</td>';
+        }).join('');
+        return '<tr class="row-' + r.status + '"><td class="status" title="' + r.status + '">' +
+               glyph[r.status] + '</td>' + cells + '</tr>';
+    }).join('');
+
+    var truncated = visible.length > shown.length
+        ? '<div class="diff-truncated">Showing ' + shown.length + ' of ' + visible.length + ' rows.</div>'
+        : '';
+
+    var out = document.getElementById('diffResults');
+    out.innerHTML = visible.length
+        ? '<div class="diff-scroll"><table class="diff"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>' + truncated
+        : '<p class="empty-hint">No differences.' + (c.unchanged ? ' ' + c.unchanged + ' rows are identical.' : '') + '</p>';
+    out.classList.remove('hidden');
+
+    function stat(cls, sign, n, label) {
+        return '<span class="diff-stat"><span class="diff-chip ' + cls + '">' + sign + '</span>' + n + ' ' + label + '</span>';
+    }
+}
+
+function doCompareRows() {
+    var a = readTable('compareColA');
+    var b = readTable('compareColB');
+    if (!a || !b) {
+        showStatus('compareStatus', 'Paste tabular data with a header row into both sides.', false);
+        return;
+    }
+    refreshKeyOptions();
+    var key = document.getElementById('cmpKey').value;
+    if (!key) {
+        showStatus('compareStatus', 'No shared column to match rows on.', false);
+        return;
+    }
+    hideStatus('compareStatus');
+    document.getElementById('compareResults').classList.add('hidden');
+    var result = diffRows(a, b, key, {
+        caseSensitive: document.getElementById('cmpCase').checked,
+        trim: document.getElementById('cmpTrim').checked
+    });
+    renderDiff(result, key, document.getElementById('cmpShowUnchanged').checked);
+}
+
 function doCompare() {
+    if (cmpMode === 'rows') { doCompareRows(); return; }
+
+    document.getElementById('diffResults').classList.add('hidden');
+    document.getElementById('diffSummary').classList.add('hidden');
+    document.getElementById('diffWarnings').innerHTML = '';
+
     var cs = document.getElementById('cmpCase').checked;
     var trim = document.getElementById('cmpTrim').checked;
 
@@ -1352,6 +1644,22 @@ ACTIONS.generateSQL     = generateSQL;
 ACTIONS.copySQL         = copySQL;
 ACTIONS.openSqlInEditor = openSqlInEditor;
 ACTIONS.copyFormula     = copyFormula;
+
+/* Compare mode toggle. Separate from the ACTIONS table because these carry a
+   value rather than naming a function. */
+document.querySelectorAll('.mode-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        setCompareMode(btn.getAttribute('data-cmpmode'));
+    });
+});
+
+/* Keep the key picker in step with whatever has been pasted, so the suggested
+   key is ready before Compare is pressed. */
+['compareColA', 'compareColB'].forEach(function(id) {
+    document.getElementById(id).addEventListener('input', function() {
+        if (cmpMode === 'rows') { refreshKeyOptions(); }
+    });
+});
 
 /* Formula parameter fields are rebuilt on every selection, so listen on the
    container instead of binding each field. */
