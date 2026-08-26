@@ -9,6 +9,7 @@ import {
 	isPlainNumber,
 	needsQuoting,
 	parseDelimitedLine,
+	parseDelimitedText,
 	quoteIdentifier,
 	sanitizeColumnNames,
 	TIMESTAMP_PATTERN
@@ -144,6 +145,52 @@ suite('sqlUtils — parseDelimitedLine', () => {
 			parseDelimitedLine('id    full name    city', /\s{2,}/),
 			['id', 'full name', 'city']
 		);
+	});
+});
+
+suite('sqlUtils — parseDelimitedText', () => {
+	test('a quoted field containing a newline stays one field', () => {
+		assert.deepStrictEqual(
+			parseDelimitedText('id,notes\n1,"line one\nline two"\n2,plain', ','),
+			[['id', 'notes'], ['1', 'line one\nline two'], ['2', 'plain']]
+		);
+	});
+
+	test('CRLF inside quotes is preserved', () => {
+		assert.deepStrictEqual(
+			parseDelimitedText('a,b\r\n1,"x\r\ny"\r\n', ','),
+			[['a', 'b'], ['1', 'x\r\ny']]
+		);
+	});
+
+	test('escaped quotes survive across lines', () => {
+		assert.deepStrictEqual(
+			parseDelimitedText('1,"he said ""hi""\nbye"', ','),
+			[['1', 'he said "hi"\nbye']]
+		);
+	});
+
+	test('ordinary documents are unaffected', () => {
+		assert.deepStrictEqual(
+			parseDelimitedText('a,b\n1,2\n3,4', ','),
+			[['a', 'b'], ['1', '2'], ['3', '4']]
+		);
+	});
+
+	test('trailing newlines and blank lines do not create rows', () => {
+		assert.deepStrictEqual(parseDelimitedText('a,b\n1,2\n', ','), [['a', 'b'], ['1', '2']]);
+		assert.deepStrictEqual(parseDelimitedText('a,b\n\n1,2', ','), [['a', 'b'], ['1', '2']]);
+	});
+
+	test('a RegExp separator falls back to line-at-a-time parsing', () => {
+		assert.deepStrictEqual(
+			parseDelimitedText('id    full name\n1     Alice Smith', /\s{2,}/),
+			[['id', 'full name'], ['1', 'Alice Smith']]
+		);
+	});
+
+	test('an unterminated quote degrades gracefully', () => {
+		assert.deepStrictEqual(parseDelimitedText('1,"oops\n2,x', ','), [['1', 'oops\n2,x']]);
 	});
 });
 

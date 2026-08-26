@@ -793,6 +793,43 @@ function quoteId(name, dialect, always) {
     }
 }
 
+/* Parse a whole delimited document, honouring RFC 4180 quoting across line
+   breaks so a quoted field containing a newline survives. Mirrors
+   parseDelimitedText in src/utils/sqlUtils.ts. */
+function parseDelimitedText(text, sep) {
+    if (sep instanceof RegExp || sep.length !== 1) {
+        return text.split(/\\r?\\n/)
+            .filter(function(l) { return l.trim() !== ''; })
+            .map(function(l) { return parseDelimitedLine(l, sep); });
+    }
+
+    var rows = [], row = [], field = '', inQuotes = false;
+    function endField() { row.push(field.trim()); field = ''; }
+    function endRow() { endField(); rows.push(row); row = []; }
+
+    for (var i = 0; i < text.length; i++) {
+        var ch = text[i];
+        if (inQuotes) {
+            if (ch === '"') {
+                if (text[i + 1] === '"') { field += '"'; i++; }
+                else { inQuotes = false; }
+            } else { field += ch; }
+        } else if (ch === '"' && field.trim() === '') {
+            inQuotes = true; field = '';
+        } else if (ch === sep) {
+            endField();
+        } else if (ch === '\\r' || ch === '\\n') {
+            if (ch === '\\r' && text[i + 1] === '\\n') { i++; }
+            endRow();
+        } else { field += ch; }
+    }
+    endRow();
+
+    return rows.filter(function(r) {
+        return r.some(function(c) { return c !== ''; });
+    });
+}
+
 /* Split one delimited line honouring RFC 4180 quoting, so a field such as
    "Smith, John" stays a single column. Mirrors parseDelimitedLine in
    src/utils/sqlUtils.ts. */
@@ -857,7 +894,10 @@ function generateSQL() {
     var headers, dataRows;
 
     if (sep) {
-        var rows = lines.map(function(l) { return parseDelimitedLine(l, sep); });
+        /* Parse the whole document rather than line by line, so quoting is
+           honoured across newlines. */
+        var rows = parseDelimitedText(raw, sep);
+        if (!rows.length) { showStatus('sqlStatus', 'No data found.', false); return; }
         if (hasHdr) {
             headers  = sanitizeColumnNames(rows[0]);
             dataRows = rows.slice(1);

@@ -21,6 +21,170 @@ Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
+## Build order
+
+Sequenced deliberately. Phase 0 exists because the items after it depend on
+it: format interop needs correct parsing, and every SQL feature currently has
+to be written twice by hand.
+
+| Phase | Goal |
+|---|---|
+| 0 | Foundations — correct parsing, and stop duplicating logic across the webview |
+| 1 | Format interop and reverse conversions |
+| 2 | List transforms, reshaping, profiling |
+| 3 | SQL depth, SQL productivity, utilities |
+
+### How new transforms are surfaced
+
+New transforms go behind **one** `Data Toolkit: Transform…` quick-pick — a
+single palette entry and a single context-menu item — not one command each.
+The extension already contributes 9 commands and a 6-item submenu; adding a
+command per transform would take it past 40 and make the palette unusable.
+A quick-pick costs no new surface per transform and filters by typing.
+
+Three or four of the highest-frequency transforms can be promoted to their own
+commands later if they prove worth a keybinding.
+
+---
+
+## Phase 0 — foundations
+
+- **Parse quoted fields containing newlines.** Parsing is line-scoped: both
+  pipelines split on lines before parsing fields, so a quoted field containing
+  a newline still breaks. Real exports contain these. This blocks CSV → JSON,
+  extract-column-N and transpose, which would all inherit the defect.
+- **Consolidate the duplicated SQL logic.** The webview script is a template
+  string and cannot import a module, so eight function pairs are maintained by
+  hand (see `docs/DEVELOPING.md`). That duplication is what let missing
+  statement terminators survive in three dialects, and what made the
+  always-quote hoisting bug possible. Preferred fix: build the webview script
+  as its own esbuild entry point and load it via `asWebviewUri` with the
+  existing nonce, so it can `import` from `src/utils/` and be type-checked and
+  unit-tested like the rest.
+
+---
+
+## Phase 1 — format interop and reverse conversions
+
+Format interop is the single largest gap: JSON is the default interchange
+format for this audience and is absent entirely.
+
+### Formats
+
+- **Tabular/CSV → JSON** array of objects, header row as keys.
+- **JSON → CSV/tabular**, header being the union of keys across all objects.
+- **NDJSON** as an explicit input and output format. Newline-delimited JSON
+  parses differently from a JSON array — a separate format, not a toggle.
+- **JSON → SQL `INSERT`**, reusing the existing type inference.
+- **Extract a field by JSON path** into a list (`$.items[*].id`), feeding
+  straight into the existing `IN (...)` tool.
+- **Markdown table** as an output target, for PR descriptions and issues.
+
+### Reverse conversions
+
+Every existing conversion is one-directional; these restore symmetry.
+
+- **Unwrap a SQL `IN (...)` clause** back into a clean list — strips the
+  wrapper, delimiters and quoting, and undoes doubled quotes
+  (`'O''Brien'` → `O'Brien`). Completes the flagship feature.
+- **CSV row → lines**, honouring RFC 4180 quoting.
+- **Transpose** rows and columns.
+- **Extract column N** by index or header name — the common "give me just this
+  column as an IN list" need.
+
+---
+
+## Phase 2 — transforms, reshaping, profiling
+
+### List transforms
+
+All behind the `Transform…` quick-pick, operating in place on a selection.
+
+- **Sort** — alphabetical, numeric, natural/version order, reverse.
+- **Change case** — upper, lower, Title, snake_case, camelCase, kebab-case.
+- **Trim and normalise whitespace** — as a first-class command, not only an
+  option on other tools.
+- **Add prefix/suffix or wrap each line**.
+- **Filter lines by regex** — keep or drop matches.
+- **Extract all regex matches**, including capture groups.
+
+### Reshaping and aggregation
+
+- **Pivot / unpivot (wide ↔ long)** — the most-requested reshape for analysts
+  and entirely missing.
+- **Group by with an aggregate** on a second column — sum, avg, min, max.
+  Only `COUNT` exists today.
+- **Dedupe by key column**, keeping the first or last row. Distinct from the
+  existing whole-line dedupe.
+- **Frequency table** with percentage, cumulative percentage and top-N cutoff.
+
+### Profiling
+
+- **Primary-key candidate detection** — which column, or combination, is
+  unique across the sample.
+- **Cardinality and selectivity** per column — distinct count, and as a ratio.
+- **Numeric distribution buckets** as a text histogram.
+- **Null-completeness summary** across all columns at once.
+
+---
+
+## Phase 3 — SQL depth, productivity, utilities
+
+### SQL Builder
+
+- **More dialects** — SQLite, Snowflake, BigQuery, Redshift, DuckDB,
+  Databricks, Oracle. Type systems differ meaningfully, so each is real work
+  rather than an alias.
+- **`MERGE`/`UPSERT`**, and **`UPDATE`/`DELETE`** generation.
+- **Batched inserts** — configurable rows per statement; SQL Server caps the
+  table value constructor at 1000 rows.
+- **Bulk-load commands** — `COPY` for PostgreSQL/Redshift, `COPY INTO` for
+  Snowflake/Databricks.
+- **Richer type inference** — nullability, boolean, UUID.
+- **Save to file** — `.sql`, `.csv`, `.json`, complementing Open in Editor.
+
+### SQL productivity
+
+- **Column-list helpers** — turn a list of column names into a `SELECT` list,
+  a `GROUP BY` list, or join conditions (`a.col = b.col`).
+- **`IN (...)` chunking** — split a large list into OR'd batches to stay under
+  Oracle's 1000-expression limit (`ORA-01795`); batch size configurable.
+- **Query scaffolds** — pivot via `CASE WHEN`, window functions
+  (`ROW_NUMBER`/`RANK`/`LAG`/`LEAD`), and a date-spine/calendar table.
+
+### Compare and Count depth
+
+- **Compare more than two columns** — extend the set operations beyond A vs B.
+- **Duplicates within a single column** — report which values repeat and how
+  often, rather than removing them.
+
+### Utilities
+
+- **Encode/decode** — URL, base64, HTML entities.
+- **Hash or redact a column** — md5/sha, for masking PII before sharing a
+  sample.
+- **Date normalisation to ISO 8601**, handling mixed formats in one column.
+
+---
+
+## Out of scope
+
+Considered and deliberately not planned. Recorded so they are not re-proposed.
+
+- **SQL formatter for arbitrary statements.** Formatting arbitrary SQL across
+  seven-plus dialects with no external dependency means writing a SQL parser —
+  a project in itself, and a half-correct formatter that mangles someone's
+  query is worse than none.
+- **Sample/fake data generation.** Overlaps a well-served category of dedicated
+  tools, and the name and pattern tables would dominate the bundle, which is
+  currently ~84 KB.
+- **Standalone SQL string escaping.** Already exists inside `formatSqlValue`
+  for generated SQL; as its own command it adds surface for very little.
+- **HTML table output** — deferred behind Markdown, which covers PR
+  descriptions and issues. Revisit only if asked for.
+
+---
+
 ## Data engineering gaps
 
 Assessed against a realistic data-engineering workflow, ordered by severity. The

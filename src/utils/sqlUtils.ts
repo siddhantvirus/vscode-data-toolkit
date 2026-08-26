@@ -26,6 +26,80 @@ export const TIMESTAMP_PATTERN =
  * not supported — that requires parsing the whole document rather than
  * splitting on lines first.
  */
+/**
+ * Parse a whole delimited document into rows, honouring RFC 4180 quoting
+ * across line breaks.
+ *
+ * Splitting on newlines before parsing fields — which is what the line-scoped
+ * `parseDelimitedLine` forces callers to do — breaks any quoted field that
+ * contains a newline, and those are common in real exports:
+ *
+ *     id,notes
+ *     1,"line one
+ *     line two"
+ *
+ * Regex separators describe space-aligned columns, which have no quoting
+ * convention, so those fall back to line-at-a-time parsing.
+ */
+export function parseDelimitedText(text: string, separator: string | RegExp): string[][] {
+    if (separator instanceof RegExp || separator.length !== 1) {
+        return text
+            .split(/\r?\n/)
+            .filter(line => line.trim() !== '')
+            .map(line => parseDelimitedLine(line, separator));
+    }
+
+    const rows: string[][] = [];
+    let row: string[] = [];
+    let field = '';
+    let inQuotes = false;
+
+    const endField = () => {
+        row.push(field.trim());
+        field = '';
+    };
+    const endRow = () => {
+        endField();
+        rows.push(row);
+        row = [];
+    };
+
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+
+        if (inQuotes) {
+            if (char === '"') {
+                if (text[i + 1] === '"') {
+                    field += '"'; // escaped quote
+                    i++;
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                // Newlines inside quotes are data, not row terminators.
+                field += char;
+            }
+        } else if (char === '"' && field.trim() === '') {
+            inQuotes = true;
+            field = '';
+        } else if (char === separator) {
+            endField();
+        } else if (char === '\r' || char === '\n') {
+            if (char === '\r' && text[i + 1] === '\n') {
+                i++;
+            }
+            endRow();
+        } else {
+            field += char;
+        }
+    }
+
+    endRow();
+
+    // Drop rows that are entirely empty — a trailing newline produces one.
+    return rows.filter(r => r.some(cell => cell !== ''));
+}
+
 export function parseDelimitedLine(line: string, separator: string | RegExp): string[] {
     if (separator instanceof RegExp || separator.length !== 1) {
         return line.split(separator).map(field => field.trim());
