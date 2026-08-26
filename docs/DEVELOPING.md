@@ -12,7 +12,8 @@ list-to-csv/
 │   └── utils/
 │       ├── sqlUtils.ts               # Delimited parsing, identifiers, type inference, value formatting
 │       ├── htmlUtils.ts              # HTML escaping, CSP nonce, RegExp escaping
-│       └── editorUtils.ts            # Open generated SQL in a new editor tab
+│       ├── editorUtils.ts            # Open generated SQL in a new editor tab
+│       └── diffUtils.ts              # Keyed row diff for the Compare tab
 ├── docs/
 │   └── DEVELOPING.md                 # This file
 ├── images/
@@ -108,6 +109,8 @@ The webview script is a string and cannot import a module, so these pairs are ha
 | `quoteId` | `quoteIdentifier` |
 | `RESERVED_WORDS` | `RESERVED_WORDS` |
 | `isPlainNumber` | `isPlainNumber` |
+| `diffRows` | `diffRows` |
+| `suggestKeyColumn` | `suggestKeyColumn` |
 
 Consolidating them is tracked in [ROADMAP.md](../ROADMAP.md).
 
