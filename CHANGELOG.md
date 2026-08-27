@@ -12,6 +12,7 @@ Pre-release.
 
 ### Fixed
 
+- **A schema-qualified table name was quoted as a single identifier.** `lakehouse.customer` was emitted with the whole string wrapped in backticks, which creates one table whose name contains a dot in the default schema, rather than `customer` in the `lakehouse` schema. Qualified names are the norm in Fabric and in any warehouse with schemas, so the DDL was wrong for a common case while looking plausible. Dotted names are now split and each part quoted on its own merits — `sales.order` becomes `sales."order"` on PostgreSQL, quoting only the reserved word. Introduced in 1.1.2 alongside quote-only-when-needed.
 - **"Generate SQL" claimed it had copied to the clipboard when it had not.** Generating renders into the panel; only **Copy SQL** and **Open in Editor** move the result anywhere. The notification had claimed a copy for the whole life of the extension, so it was possible to paste stale clipboard content believing the new script was there. The panel now reports what was actually generated, and says plainly that it has not been copied yet.
 
 ---

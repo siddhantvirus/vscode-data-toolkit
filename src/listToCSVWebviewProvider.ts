@@ -1080,8 +1080,20 @@ function needsQuoting(name) {
 }
 
 /* Quoting a plain name like my_table is unnecessary, and downstream tools do
-   not always strip the quotes again — the name can end up carrying them. */
+   not always strip the quotes again — the name can end up carrying them.
+   A dotted name is schema-qualified (dbo.employees, lakehouse.customer): each
+   part is its own identifier, so quoting the whole string would create one
+   table literally named "dbo.employees" in the default schema. */
 function quoteId(name, dialect, always) {
+    var parts = String(name).split('.');
+    var qualified = parts.length > 1 && parts.every(function(p) { return p.trim() !== ''; });
+    if (qualified) {
+        return parts.map(function(p) { return quoteIdPart(p, dialect, always); }).join('.');
+    }
+    return quoteIdPart(name, dialect, always);
+}
+
+function quoteIdPart(name, dialect, always) {
     if (!always && !needsQuoting(name)) { return name; }
     switch (dialect) {
         case 'mssql':    return '[' + String(name).replace(/]/g, ']]') + ']';

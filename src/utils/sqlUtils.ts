@@ -276,6 +276,21 @@ export function quoteIdentifier(
     dialect: string,
     quoting: IdentifierQuoting = 'auto'
 ): string {
+    // A dotted name is schema-qualified — `dbo.employees`, `lakehouse.customer`.
+    // Each part is a separate identifier, so quote them independently. Wrapping
+    // the whole string instead creates one table literally named
+    // "dbo.employees" in the default schema, which is not what was asked for.
+    // A part that is empty means the name is malformed as a qualifier
+    // (".foo", "a..b"), so fall back to treating it as a single identifier.
+    const parts = name.split('.');
+    if (parts.length > 1 && parts.every(part => part.trim() !== '')) {
+        return parts.map(part => quoteIdentifierPart(part, dialect, quoting)).join('.');
+    }
+
+    return quoteIdentifierPart(name, dialect, quoting);
+}
+
+function quoteIdentifierPart(name: string, dialect: string, quoting: IdentifierQuoting): string {
     if (quoting === 'auto' && !needsQuoting(name)) {
         return name;
     }
