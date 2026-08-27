@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.5] — 2026-08-26
+
+Pre-release.
+
+### Fixed
+
+- **"Generate SQL" claimed it had copied to the clipboard when it had not.** Generating renders into the panel; only **Copy SQL** and **Open in Editor** move the result anywhere. The notification had claimed a copy for the whole life of the extension, so it was possible to paste stale clipboard content believing the new script was there. The panel now reports what was actually generated, and says plainly that it has not been copied yet.
+
+---
+
 ## [1.1.4] — 2026-08-26
 
 Pre-release.

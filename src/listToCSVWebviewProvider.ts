@@ -55,7 +55,13 @@ export class ListToCSVWebviewProvider {
                             vscode.window.showInformationMessage('Converted and copied ' + message.count + ' records to clipboard!');
                             return;
                         case 'sqlGenerated':
-                            vscode.window.showInformationMessage('SQL for ' + String(message.dialect).toUpperCase() + ' copied to clipboard!');
+                            // Generating renders into the panel; it does not touch
+                            // the clipboard. This claimed otherwise for the whole
+                            // life of the extension, so people reasonably pasted
+                            // stale content believing the copy had happened.
+                            vscode.window.showInformationMessage(
+                                `${String(message.dialect).toUpperCase()} SQL generated — use "Copy SQL" or "Open in Editor".`
+                            );
                             return;
                         case 'copySuccess':
                             vscode.window.showInformationMessage(message.text);
@@ -1236,7 +1242,15 @@ function generateSQL() {
     var out = document.getElementById('sqlOutput');
     out.textContent = sql;
     out.classList.remove('hidden');
-    hideStatus('sqlStatus');
+
+    /* Say what happened where the user is looking. Generating does not copy —
+       that is what the Copy SQL and Open in Editor buttons are for. */
+    showStatus('sqlStatus',
+        'Generated ' + (genCre ? 'CREATE TABLE' : '') +
+        (genCre && genIns ? ' + ' : '') +
+        (genIns ? dataRows.length + ' INSERT row' + (dataRows.length === 1 ? '' : 's') : '') +
+        ' for ' + dialect.toUpperCase() + '. Not copied yet — use Copy SQL or Open in Editor.', true);
+
     vscode.postMessage({ command: 'sqlGenerated', dialect: dialect });
 }
 
