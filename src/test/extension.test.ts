@@ -257,6 +257,30 @@ suite('sqlUtils — identifier quoting', () => {
 		assert.strictEqual(quoteIdentifier('my_table', 'spark', 'always'), '`my_table`');
 	});
 
+	test('a schema-qualified name keeps its parts separate', () => {
+		// Quoting the whole string would create one table literally named
+		// "dbo.employees" in the default schema.
+		assert.strictEqual(quoteIdentifier('dbo.employees', 'spark'), 'dbo.employees');
+		assert.strictEqual(quoteIdentifier('lakehouse.customer', 'spark'), 'lakehouse.customer');
+		assert.strictEqual(quoteIdentifier('cat.sch.tbl', 'spark'), 'cat.sch.tbl');
+	});
+
+	test('within a qualified name, only the part needing quotes gets them', () => {
+		assert.strictEqual(quoteIdentifier('sales.order', 'spark'), 'sales.`order`');
+		assert.strictEqual(quoteIdentifier('sales.order', 'postgres'), 'sales."order"');
+		assert.strictEqual(quoteIdentifier('sales.order', 'mssql'), 'sales.[order]');
+		assert.strictEqual(quoteIdentifier('my schema.tbl', 'spark'), '`my schema`.tbl');
+	});
+
+	test('always mode quotes each part of a qualified name', () => {
+		assert.strictEqual(quoteIdentifier('dbo.employees', 'spark', 'always'), '`dbo`.`employees`');
+	});
+
+	test('a malformed qualifier is treated as a single identifier', () => {
+		assert.strictEqual(quoteIdentifier('.foo', 'spark'), '`.foo`');
+		assert.strictEqual(quoteIdentifier('a..b', 'spark'), '`a..b`');
+	});
+
 	test('delimiters embedded in a name are escaped', () => {
 		assert.strictEqual(quoteIdentifier('a`b', 'spark'), '`a``b`');
 		assert.strictEqual(quoteIdentifier('a"b', 'postgres'), '"a""b"');
