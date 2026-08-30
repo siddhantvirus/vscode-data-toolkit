@@ -23,30 +23,59 @@ const esbuildProblemMatcherPlugin = {
 	},
 };
 
+/** Extension host bundle — Node, CommonJS, vscode provided by the runtime. */
+const extensionConfig = {
+	entryPoints: [
+		'src/extension.ts'
+	],
+	bundle: true,
+	format: 'cjs',
+	minify: production,
+	sourcemap: !production,
+	sourcesContent: false,
+	platform: 'node',
+	outfile: 'dist/extension.js',
+	external: ['vscode'],
+	logLevel: 'silent',
+	plugins: [
+		/* add to the end of plugins array */
+		esbuildProblemMatcherPlugin,
+	],
+};
+
+/**
+ * Panel bundle — browser, IIFE, loaded through asWebviewUri.
+ *
+ * Building this separately is what lets the panel `import` from src/utils
+ * instead of carrying hand-written copies of the same helpers.
+ */
+const webviewConfig = {
+	entryPoints: [
+		'src/webview/main.ts'
+	],
+	bundle: true,
+	format: 'iife',
+	minify: production,
+	sourcemap: !production,
+	sourcesContent: false,
+	platform: 'browser',
+	target: 'es2020',
+	outfile: 'dist/webview.js',
+	logLevel: 'silent',
+	plugins: [esbuildProblemMatcherPlugin],
+};
+
 async function main() {
-	const ctx = await esbuild.context({
-		entryPoints: [
-			'src/extension.ts'
-		],
-		bundle: true,
-		format: 'cjs',
-		minify: production,
-		sourcemap: !production,
-		sourcesContent: false,
-		platform: 'node',
-		outfile: 'dist/extension.js',
-		external: ['vscode'],
-		logLevel: 'silent',
-		plugins: [
-			/* add to the end of plugins array */
-			esbuildProblemMatcherPlugin,
-		],
-	});
+	const contexts = await Promise.all([
+		esbuild.context(extensionConfig),
+		esbuild.context(webviewConfig),
+	]);
+
 	if (watch) {
-		await ctx.watch();
+		await Promise.all(contexts.map(ctx => ctx.watch()));
 	} else {
-		await ctx.rebuild();
-		await ctx.dispose();
+		await Promise.all(contexts.map(ctx => ctx.rebuild()));
+		await Promise.all(contexts.map(ctx => ctx.dispose()));
 	}
 }
 

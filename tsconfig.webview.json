@@ -1,0 +1,25 @@
+{
+	// The panel script runs in a browser context, so it needs the DOM lib —
+	// which the extension-host config deliberately omits, to stop browser-only
+	// APIs type-checking inside code that runs in Node.
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"lib": [
+			"ES2022",
+			"DOM"
+		],
+		"noEmit": true,
+		// The panel script was lifted wholesale out of a template literal, where
+		// it had never been type-checked at all. Checking it strictly means
+		// annotating ~900 lines of DOM access up front; that is worth doing, but
+		// separately from moving it into a module. Everything it imports from
+		// src/utils is still checked strictly by the main config.
+		"strict": false
+	},
+	"include": [
+		"src/webview/**/*.ts"
+	],
+	// The base config excludes src/webview so the host build ignores it; that
+	// exclusion is inherited and would cancel the include above.
+	"exclude": []
+}

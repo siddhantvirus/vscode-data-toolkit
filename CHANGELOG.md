@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.6] — 2026-08-29
+
+Pre-release. No user-visible change; the panel behaves exactly as before.
+
+### Changed
+
+- **The panel script is now a module instead of a string.** It lived in a template literal inside the provider, which cannot import anything, so twelve functions — type inference, value formatting, identifier quoting, delimited parsing, the row diff — existed twice and had to be edited twice.
+
+  That duplication caused real defects: missing statement terminators survived in three dialects because the fix only landed in one copy, and a `var` hoisting bug in the panel's copy made "Always quote identifiers" silently ignore the table name.
+
+  `src/webview/main.ts` is now built as its own esbuild entry point and loaded through `asWebviewUri`, so it imports the same helpers the extension host uses. Being real TypeScript also means backticks, regex literals and `${...}` no longer need escaping inside it.
+
+  The extension-host bundle drops from 101 KB to 67 KB, since it no longer carries the panel source; the panel's own 48 KB bundle is fetched only when the panel opens.
+
+---
+
 ## [1.1.5] — 2026-08-26
 
 Pre-release.

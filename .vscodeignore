@@ -11,7 +11,7 @@ src/**
 esbuild.js
 docs/**
 ROADMAP.md
-**/tsconfig.json
+**/tsconfig*.json
 **/eslint.config.mjs
 **/*.map
 **/*.ts
