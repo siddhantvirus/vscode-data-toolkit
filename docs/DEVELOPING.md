@@ -8,7 +8,9 @@ Deep-dive reference for working on the extension. For contribution process and s
 list-to-csv/
 ├── src/
 │   ├── extension.ts                  # Entry point: registers all commands
-│   ├── listToCSVWebviewProvider.ts   # Singleton webview panel (5-tab UI)
+│   ├── listToCSVWebviewProvider.ts   # Panel lifecycle + HTML/CSS (no script)
+│   ├── webview/
+│   │   └── main.ts                   # Panel script; imports from utils, bundled separately
 │   └── utils/
 │       ├── sqlUtils.ts               # Delimited parsing, identifiers, type inference, value formatting
 │       ├── htmlUtils.ts              # HTML escaping, CSP nonce, RegExp escaping
@@ -73,11 +75,18 @@ Builds the extension, packages a `.vsix`, and lists its contents so you can conf
 
 `ListToCSVWebviewProvider` is a singleton — one panel is reused across commands. `show(options)` creates or reveals the panel; pass `{ prefillInput: false }` when targeting a tab other than Convert. `sendMessage(message)` posts a message into the webview JS context.
 
-The webview HTML, CSS, and JavaScript are all inlined as a TypeScript template literal inside `_getWebviewContent()`.
+`_getWebviewContent(webview)` returns the HTML and CSS as a template literal. The **script is not inlined** — it is built separately to `dist/webview.js` and referenced through `webview.asWebviewUri(...)`, which is what lets it import from `src/utils`.
 
-**Backticks inside the webview JS must be escaped as `` \` ``** — the whole document lives in a template literal, so an unescaped backtick silently terminates it. See `quoteId()`, which emits MySQL identifier quotes.
+Two esbuild configs in `esbuild.js` produce this:
 
-For the same reason, regex literals and `${...}` sequences inside the webview script need escaping (`\\s`, `\\n`, `\\r`) so they survive into the emitted string rather than being interpreted by TypeScript.
+| Bundle | Entry | Format | Platform |
+|---|---|---|---|
+| `dist/extension.js` | `src/extension.ts` | cjs | node |
+| `dist/webview.js` | `src/webview/main.ts` | iife | browser |
+
+Because the script is real TypeScript rather than a string, backticks, regex literals and `${...}` no longer need escaping — a long-standing source of subtle breakage. Only the HTML and CSS still live in a template literal.
+
+The panel script needs the DOM lib, which the host config deliberately omits so browser-only APIs cannot type-check inside extension code. It is therefore checked by `tsconfig.webview.json`, and `npm run check-types` runs both projects.
 
 ### Security constraints
 
@@ -93,26 +102,18 @@ Both webviews declare a Content-Security-Policy with a per-render script nonce. 
 
 The webview posts `{ command: 'ready' }` once its script has run. Messages sent before that are queued by the provider and replayed on receipt, so prefilling input or switching tabs cannot lose a race against webview load.
 
-### Duplicated SQL logic
+### Shared logic
 
-The webview script is a string and cannot import a module, so these pairs are hand-maintained copies — **change both together**:
+The panel script lives in `src/webview/main.ts` and **imports the same helpers the extension host uses**. There are no hand-maintained copies to keep in step.
 
-| Webview | `src/utils/sqlUtils.ts` |
-|---|---|
-| `inferType` | `inferSqlDataType` |
-| `fmtSqlVal` | `formatSqlValue` |
-| `detectSep` | `detectSeparator` |
-| `parseDelimitedLine` | `parseDelimitedLine` |
-| `parseDelimitedText` | `parseDelimitedText` |
-| `sanitizeColumnNames` | `sanitizeColumnNames` |
-| `needsQuoting` | `needsQuoting` |
-| `quoteId` | `quoteIdentifier` |
-| `RESERVED_WORDS` | `RESERVED_WORDS` |
-| `isPlainNumber` | `isPlainNumber` |
-| `diffRows` | `diffRows` |
-| `suggestKeyColumn` | `suggestKeyColumn` |
+Until 1.1.6 the script was a template literal inside the provider, which cannot import anything, so twelve functions existed twice. They drifted: the missing statement terminators survived in three dialects because the fix only landed in one of the two implementations, and a `var` hoisting bug in the panel copy made the always-quote option silently ignore the table name. Fixing anything meant remembering to fix it twice.
 
-Consolidating them is tracked in [ROADMAP.md](../ROADMAP.md).
+Two adapters remain in `main.ts`, because the panel's controls are checkboxes while the shared API takes enums:
+
+- `quoteId(name, dialect, always)` → `quoteIdentifier(..., always ? 'always' : 'auto')`
+- `inferSqlDataType(dataRows, i, dialect, sizeVar ? 'fromSample' : 'fixed')`
+
+`el(id)` is a typed `getElementById` wrapper; it defaults to `HTMLInputElement` so `.value` and `.checked` resolve without a cast at each of the ~70 call sites. **Do not shadow it with a local named `el`** — `var el = el(...)` hoists as `undefined` and throws at the call.
 
 ### Parsing rules
 

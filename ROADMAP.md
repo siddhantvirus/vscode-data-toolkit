@@ -53,14 +53,15 @@ commands later if they prove worth a keybinding.
   pipelines split on lines before parsing fields, so a quoted field containing
   a newline still breaks. Real exports contain these. This blocks CSV → JSON,
   extract-column-N and transpose, which would all inherit the defect.
-- **Consolidate the duplicated SQL logic.** The webview script is a template
-  string and cannot import a module, so eight function pairs are maintained by
-  hand (see `docs/DEVELOPING.md`). That duplication is what let missing
-  statement terminators survive in three dialects, and what made the
-  always-quote hoisting bug possible. Preferred fix: build the webview script
-  as its own esbuild entry point and load it via `asWebviewUri` with the
-  existing nonce, so it can `import` from `src/utils/` and be type-checked and
-  unit-tested like the rest.
+- ~~Consolidate the duplicated SQL logic~~ — **done in 1.1.6**. The panel script
+  moved to `src/webview/main.ts`, built as its own esbuild entry point and
+  loaded via `asWebviewUri`, so it imports the same helpers the extension host
+  uses. Twelve hand-maintained pairs are gone.
+
+  **Phase 0 is complete; Phase 1 is unblocked.** Remaining follow-up: the panel
+  script is checked with `strict: false` (`tsconfig.webview.json`) because it
+  was lifted wholesale out of a template literal where it had never been
+  type-checked at all. Tightening it is worthwhile but independent of the move.
 
 ---
 
