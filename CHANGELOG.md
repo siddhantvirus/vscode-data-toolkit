@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.7] — 2026-08-31
+
+Pre-release. No user-visible change.
+
+### Changed
+
+- **The command path is now covered by tests.** Its functions were all module-private, so nothing in `src/extension.ts` was reachable from the test suite — which is precisely where the reported bugs lived. `convertToCommaLine`, `formatCSVCell`, `parseSqlTabularData` and `createSqlTableStatement` are exported and have regression tests for every defect found by hand: the broken `IN` clause, the `escapeCharacter` crash, the missing statement terminators, zero-padding, quoted and multi-line fields, and schema-qualified names.
+- `createSqlTableStatement` takes its generation settings as an argument rather than reading configuration internally, which is what made it testable. The settings are still read at generation time, so a saved conversion cannot pin stale values.
+- **The `IN (...)` line builder is shared.** The command and the panel each had their own copy of the quote-doubling logic; both now call `joinAsDelimitedLine` in `sqlUtils`.
+
+---
+
 ## [1.1.6] — 2026-08-29
 
 Pre-release. No user-visible change; the panel behaves exactly as before.

@@ -6,6 +6,7 @@ import {
     formatSqlValue,
     getDefaultDataType,
     inferSqlDataType,
+    joinAsDelimitedLine,
     detectSeparator,
     parseDelimitedText,
     sanitizeColumnNames,
@@ -196,14 +197,14 @@ export function activate(context: vscode.ExtensionContext) {
                     
                     // If user proceeded after preview, generate SQL from the parsed data
                     // This ensures we use the same data that was previewed
-                    const sqlStatement = createSqlTableStatement(headers, dataLines, options);
+                    const sqlStatement = createSqlTableStatement(headers, dataLines, options, readSqlGenerationSettings());
                     
                     await announceGeneratedSql(sqlStatement, options.dialect);
                     return;
                 }
                 
                 // No preview requested, generate SQL directly
-                const sqlStatement = createSqlTableStatement(headers, dataLines, options);
+                const sqlStatement = createSqlTableStatement(headers, dataLines, options, readSqlGenerationSettings());
 
                 await announceGeneratedSql(sqlStatement, options.dialect);
             } catch (error) {
@@ -297,7 +298,7 @@ export function activate(context: vscode.ExtensionContext) {
                         }
                     }
                     
-                    const sqlStatement = createSqlTableStatement(headers, dataLines, sqlConfig);
+                    const sqlStatement = createSqlTableStatement(headers, dataLines, sqlConfig, readSqlGenerationSettings());
                     await vscode.env.clipboard.writeText(sqlStatement);
                     vscode.window.showInformationMessage('SQL table generated using last configuration and copied to clipboard');
                 }
@@ -480,7 +481,7 @@ async function getCommaLineOptions(): Promise<CommaListOptions | undefined> {
 /**
  * Convert list text to comma-separated line
  */
-function convertToCommaLine(text: string, options: CommaListOptions): string {
+export function convertToCommaLine(text: string, options: CommaListOptions): string {
     // Trim before filtering and deduplicating, so that '  foo' and 'foo' are
     // recognised as the same value and no padding leaks inside the quotes.
     const lines = text
@@ -495,26 +496,11 @@ function convertToCommaLine(text: string, options: CommaListOptions): string {
     // Remove duplicates if specified
     const processedLines = options.removeDuplicates ? [...new Set(lines)] : lines;
 
-    // Format lines with enclosures, doubling any quote character inside the
-    // value — otherwise a value like O'Brien terminates the literal early and
-    // produces a broken IN clause.
-    const { enclosure } = options;
-    const formattedLines = processedLines.map(line => {
-        if (!enclosure) {
-            return line;
-        }
-        return `${enclosure}${line.split(enclosure).join(enclosure + enclosure)}${enclosure}`;
+    return joinAsDelimitedLine(processedLines, {
+        separator: options.separator,
+        enclosure: options.enclosure,
+        sqlInClause: options.sqlInClause
     });
-
-    // Join with separator
-    let result = formattedLines.join(options.separator);
-
-    // Add SQL IN clause wrapper if specified
-    if (options.sqlInClause) {
-        result = `IN (${result})`;
-    }
-
-    return result;
 }
 
 /**
@@ -539,7 +525,7 @@ function getConversionOptions(): ConversionOptions {
 /**
  * Convert list text to CSV format
  */
-function convertListToCSV(text: string, options: ConversionOptions): string {
+export function convertListToCSV(text: string, options: ConversionOptions): string {
     // Split text into lines and remove empty lines
     const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
     
@@ -666,7 +652,7 @@ function formatCSVRow(row: string[], options: ConversionOptions): string {
 /**
  * Format a cell for CSV output with proper escaping
  */
-function formatCSVCell(cell: string, options: ConversionOptions): string {
+export function formatCSVCell(cell: string, options: ConversionOptions): string {
     const { quoteAllFields, delimiter } = options;
 
     // The quote character comes from user settings, so it may be empty or a
@@ -764,18 +750,35 @@ async function getSqlTableOptions(): Promise<SqlTableOptions | undefined> {
 /**
  * Create a SQL table creation statement
  */
-function createSqlTableStatement(
+/** Settings that shape generated SQL but are not part of a saved conversion. */
+export interface SqlGenerationSettings {
+    varcharSizing: VarcharSizing;
+    quoting: IdentifierQuoting;
+}
+
+/**
+ * Read the generation settings from configuration.
+ *
+ * Deliberately read at generation time rather than stored on `SqlTableOptions`,
+ * which is persisted as a "last used" configuration — otherwise a saved
+ * conversion would pin whatever the settings were when it was first run.
+ */
+export function readSqlGenerationSettings(): SqlGenerationSettings {
+    const config = vscode.workspace.getConfiguration('list-to-csv');
+    return {
+        varcharSizing: config.get<VarcharSizing>('varcharSizing', 'fixed'),
+        quoting: config.get<IdentifierQuoting>('quoteIdentifiers', 'auto')
+    };
+}
+
+export function createSqlTableStatement(
     headers: string[],
     sampleData: string[][],
-    options: SqlTableOptions
+    options: SqlTableOptions,
+    settings: SqlGenerationSettings
 ): string {
     const { tableName, dialect, inferDataTypes } = options;
-
-    // Read fresh rather than storing on the options, so a saved "last used"
-    // configuration cannot pin a stale sizing choice.
-    const config = vscode.workspace.getConfiguration('list-to-csv');
-    const varcharSizing = config.get<VarcharSizing>('varcharSizing', 'fixed');
-    const quoting = config.get<IdentifierQuoting>('quoteIdentifiers', 'auto');
+    const { varcharSizing, quoting } = settings;
 
     const quote = (name: string) => quoteIdentifier(name, dialect, quoting);
 
@@ -832,7 +835,7 @@ function createSqlTableStatement(
  * @param text The text to parse
  * @param hasHeaders Whether the first row contains headers (default: true)
  */
-function parseSqlTabularData(text: string, hasHeaders: boolean = true): { headers: string[], dataLines: string[][] } {
+export function parseSqlTabularData(text: string, hasHeaders: boolean = true): { headers: string[], dataLines: string[][] } {
     // Split text into lines and remove empty lines
     const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
     
