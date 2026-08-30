@@ -12,6 +12,7 @@ import {
     formatSqlValue as fmtSqlVal,
     getDefaultDataType as getDefaultType,
     inferSqlDataType,
+    joinAsDelimitedLine,
     parseDelimitedText,
     quoteIdentifier,
     sanitizeColumnNames
@@ -107,15 +108,11 @@ function getConvertLines() {
 function getConvertResult() {
     var lines = getConvertLines();
     if (!lines.length) { return null; }
-    var sep = el('separator').value || ',';
-    var enc = (document.querySelector('input[name="enc"]:checked') as HTMLInputElement).value;
-    var sqlIn = el('sqlIn').checked;
-    /* Double any quote character inside the value, otherwise a value such as
-       O'Brien closes the literal early and produces a broken IN clause. */
-    var formatted = lines.map(function(l) {
-        return enc ? enc + l.split(enc).join(enc + enc) + enc : l;
-    }).join(sep);
-    return sqlIn ? 'IN (' + formatted + ')' : formatted;
+    return joinAsDelimitedLine(lines, {
+        separator: el('separator').value || ',',
+        enclosure: (document.querySelector('input[name="enc"]:checked') as HTMLInputElement).value,
+        sqlInClause: el('sqlIn').checked
+    });
 }
 
 function convertPreview() {

@@ -218,6 +218,37 @@ export function formatSqlValue(value: string, inferDataTypes: boolean): string {
  * @param dialect The SQL dialect
  * @returns The default data type for the dialect
  */
+export interface DelimitedLineOptions {
+    /** Text placed between values. */
+    separator: string;
+    /** Quote character wrapped around each value; empty string for none. */
+    enclosure: string;
+    /** Wrap the whole result in `IN ( ... )`. */
+    sqlInClause: boolean;
+}
+
+/**
+ * Join values into a single delimited line, doubling any quote character that
+ * appears inside a value.
+ *
+ * Without the doubling, a value such as `O'Brien` closes the literal early and
+ * produces a broken `IN` clause. Both the editor command and the panel build
+ * this line, so it lives here rather than being implemented twice.
+ */
+export function joinAsDelimitedLine(values: string[], options: DelimitedLineOptions): string {
+    const { separator, enclosure, sqlInClause } = options;
+
+    const formatted = values.map(value => {
+        if (!enclosure) {
+            return value;
+        }
+        return `${enclosure}${value.split(enclosure).join(enclosure + enclosure)}${enclosure}`;
+    });
+
+    const line = formatted.join(separator);
+    return sqlInClause ? `IN (${line})` : line;
+}
+
 /**
  * Whether identifiers are quoted unconditionally or only when they need it.
  *

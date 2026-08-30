@@ -7,6 +7,7 @@ import {
 	getDefaultDataType,
 	inferSqlDataType,
 	isPlainNumber,
+	joinAsDelimitedLine,
 	needsQuoting,
 	parseDelimitedLine,
 	parseDelimitedText,
@@ -16,6 +17,12 @@ import {
 } from '../utils/sqlUtils';
 import { escapeHtml, escapeRegExp, getNonce } from '../utils/htmlUtils';
 import { diffRows, suggestKeyColumn } from '../utils/diffUtils';
+import {
+	convertToCommaLine,
+	createSqlTableStatement,
+	formatCSVCell,
+	parseSqlTabularData
+} from '../extension';
 
 suite('sqlUtils — isPlainNumber', () => {
 	test('accepts plain integers and decimals', () => {
@@ -393,6 +400,186 @@ suite('htmlUtils', () => {
 		const nonce = getNonce();
 		assert.match(nonce, /^[A-Za-z0-9]{32}$/);
 		assert.notStrictEqual(nonce, getNonce());
+	});
+});
+
+/**
+ * Regression cover for the command path. Every case below corresponds to a bug
+ * that was reported by hand and shipped before it was caught, because none of
+ * these functions were reachable from a test.
+ */
+suite('extension — convertToCommaLine', () => {
+	const opts = (over: Partial<Parameters<typeof convertToCommaLine>[1]> = {}) => ({
+		removeDuplicates: false, separator: ',', enclosure: "'", sqlInClause: false, ...over
+	});
+
+	test('a value containing the quote character does not break the clause', () => {
+		// Shipped bug: produced 'O'Brien', terminating the literal early.
+		assert.strictEqual(convertToCommaLine("O'Brien", opts()), "'O''Brien'");
+	});
+
+	test('wraps as an IN clause when asked', () => {
+		assert.strictEqual(
+			convertToCommaLine('a\nb', opts({ sqlInClause: true })),
+			"IN ('a','b')"
+		);
+	});
+
+	test('trims before deduplicating, so padded values match', () => {
+		assert.strictEqual(
+			convertToCommaLine('  foo  \nfoo\nbar', opts({ removeDuplicates: true })),
+			"'foo','bar'"
+		);
+	});
+
+	test('CRLF input leaves no carriage return inside the quotes', () => {
+		assert.strictEqual(convertToCommaLine('a\r\nb', opts()), "'a','b'");
+	});
+
+	test('an empty enclosure emits bare values', () => {
+		assert.strictEqual(convertToCommaLine('a\nb', opts({ enclosure: '' })), 'a,b');
+	});
+
+	test('rejects input with no usable lines', () => {
+		assert.throws(() => convertToCommaLine('   \n\n', opts()));
+	});
+});
+
+suite('extension — formatCSVCell', () => {
+	const opts = (over = {}) => ({
+		delimiter: ',', includeHeaders: false, quoteAllFields: false, escapeCharacter: '"', ...over
+	});
+
+	test('a regex metacharacter as the quote character does not throw', () => {
+		// Shipped bug: escapeCharacter went into a RegExp unescaped, so '(' threw.
+		assert.doesNotThrow(() => formatCSVCell('abc', opts({ escapeCharacter: '(' })));
+		// One '|' in the value doubles to '||', then the whole cell is wrapped.
+		assert.strictEqual(formatCSVCell('a|b', opts({ escapeCharacter: '|' })), '|a||b|');
+	});
+
+	test('an empty quote character falls back to a double quote', () => {
+		assert.strictEqual(formatCSVCell('a,b', opts({ escapeCharacter: '' })), '"a,b"');
+	});
+
+	test('quotes only when the value needs it', () => {
+		assert.strictEqual(formatCSVCell('plain', opts()), 'plain');
+		assert.strictEqual(formatCSVCell('a,b', opts()), '"a,b"');
+		assert.strictEqual(formatCSVCell('a\nb', opts()), '"a\nb"');
+	});
+
+	test('embedded quote characters are doubled', () => {
+		assert.strictEqual(formatCSVCell('say "hi"', opts()), '"say ""hi"""');
+	});
+});
+
+suite('extension — parseSqlTabularData', () => {
+	test('a quoted field containing the delimiter stays one column', () => {
+		const { headers, dataLines } = parseSqlTabularData('id,name\n1,"Smith, John"');
+		assert.deepStrictEqual(headers, ['id', 'name']);
+		assert.deepStrictEqual(dataLines, [['1', 'Smith, John']]);
+	});
+
+	test('a quoted field containing a newline stays one row', () => {
+		const { dataLines } = parseSqlTabularData('id,notes\n1,"line one\nline two"');
+		assert.deepStrictEqual(dataLines, [['1', 'line one\nline two']]);
+	});
+
+	test('space-aligned columns are not split on every space', () => {
+		const { headers } = parseSqlTabularData('id    full name    city\n1     Alice Smith  NYC');
+		assert.deepStrictEqual(headers, ['id', 'full_name', 'city']);
+	});
+
+	test('headers are made valid and unique', () => {
+		const { headers } = parseSqlTabularData('Region,Region,2024 Revenue\na,b,c');
+		assert.deepStrictEqual(headers, ['Region', 'Region_2', 'col_2024_Revenue']);
+	});
+
+	test('rows are squared off against the header count', () => {
+		const { dataLines } = parseSqlTabularData('a,b,c\n1,2');
+		assert.deepStrictEqual(dataLines, [['1', '2', '']]);
+	});
+});
+
+suite('extension — createSqlTableStatement', () => {
+	const headers = ['id', 'name'];
+	const rows = [['1', 'Alice']];
+	const settings = { varcharSizing: 'fixed' as const, quoting: 'auto' as const };
+	const opts = (dialect: 'mssql' | 'mysql' | 'postgres' | 'spark') => ({
+		tableName: 'my_table', dialect, inferDataTypes: true
+	});
+
+	test('every dialect terminates both statements', () => {
+		// Shipped bug: only postgres emitted a semicolon, so Spark ended on
+		// USING DELTA and the script failed as a multi-statement batch.
+		for (const dialect of ['mssql', 'mysql', 'postgres', 'spark'] as const) {
+			const sql = createSqlTableStatement(headers, rows, opts(dialect), settings);
+			const statements = sql.split('\n').filter(l => l.trim().startsWith('CREATE') || l.trim().startsWith('INSERT'));
+			assert.ok(statements.length >= 2, `${dialect}: expected CREATE and INSERT`);
+			assert.ok(/\);\s*$/.test(sql.trim()), `${dialect}: script does not end in ');'`);
+			assert.strictEqual((sql.match(/;/g) || []).length, 2, `${dialect}: expected two terminators`);
+		}
+	});
+
+	test('Spark keeps USING DELTA before the terminator', () => {
+		const sql = createSqlTableStatement(headers, rows, opts('spark'), settings);
+		assert.ok(sql.includes('USING DELTA;'), sql);
+	});
+
+	test('a plain table name is not quoted', () => {
+		const sql = createSqlTableStatement(headers, rows, opts('spark'), settings);
+		assert.ok(sql.includes('CREATE TABLE my_table ('), sql);
+	});
+
+	test('a schema-qualified name keeps its parts separate', () => {
+		const sql = createSqlTableStatement(
+			headers, rows, { ...opts('spark'), tableName: 'lakehouse.customer' }, settings
+		);
+		assert.ok(sql.includes('CREATE TABLE lakehouse.customer ('), sql);
+	});
+
+	test('always mode quotes identifiers', () => {
+		const sql = createSqlTableStatement(
+			headers, rows, opts('spark'), { ...settings, quoting: 'always' }
+		);
+		assert.ok(sql.includes('CREATE TABLE `my_table` ('), sql);
+	});
+
+	test('zero-padded values are written as text', () => {
+		const sql = createSqlTableStatement(headers, [['007', 'Alice']], opts('postgres'), settings);
+		assert.ok(sql.includes("('007', 'Alice')"), sql);
+	});
+
+	test('values containing a quote are escaped', () => {
+		const sql = createSqlTableStatement(headers, [['1', "O'Brien"]], opts('postgres'), settings);
+		assert.ok(sql.includes("'O''Brien'"), sql);
+	});
+
+	test('multi-row inserts are emitted as one statement', () => {
+		const sql = createSqlTableStatement(headers, [['1', 'a'], ['2', 'b']], opts('postgres'), settings);
+		assert.strictEqual((sql.match(/INSERT INTO/g) || []).length, 1);
+	});
+});
+
+suite('sqlUtils — joinAsDelimitedLine', () => {
+	test('doubles the enclosure inside a value', () => {
+		assert.strictEqual(
+			joinAsDelimitedLine(["O'Brien"], { separator: ',', enclosure: "'", sqlInClause: false }),
+			"'O''Brien'"
+		);
+	});
+
+	test('wraps as an IN clause when asked', () => {
+		assert.strictEqual(
+			joinAsDelimitedLine(['a', 'b'], { separator: ',', enclosure: "'", sqlInClause: true }),
+			"IN ('a','b')"
+		);
+	});
+
+	test('no enclosure leaves values bare', () => {
+		assert.strictEqual(
+			joinAsDelimitedLine(['a', 'b'], { separator: '|', enclosure: '', sqlInClause: false }),
+			'a|b'
+		);
 	});
 });
 
