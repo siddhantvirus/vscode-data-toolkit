@@ -6,6 +6,53 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.0] — 2026-09-01
+
+First stable release since 1.0.0, promoting the 1.1.x pre-release line.
+
+Everything below shipped and was exercised on the pre-release channel first. The per-version entries are kept beneath this one; this section is the view for anyone upgrading from **1.0.0**, which is what the stable channel has been serving.
+
+### Fixed — data correctness
+
+These produced wrong output silently, with no error to notice:
+
+- **Quoted fields were split apart.** `1,"Smith, John",NYC` parsed as four fields instead of three, shifting every column after it. Parsing is now RFC 4180 aware, including quoted fields that span line breaks.
+- **Zero-padded values lost their padding.** `007` was written unquoted and became `7` — the same for any zero-padded id or postcode. Only unambiguous decimal numbers are emitted as numeric literals now.
+- **`IN (...)` broke on any value containing a quote.** `O'Brien` produced `'O'Brien'`.
+- **Space-aligned data split on every space**, turning each word into its own column.
+- **Duplicate or illegal column names produced DDL every engine rejects** — two columns named `Region`, or a name starting with a digit.
+- **`CREATE TABLE` was only terminated for PostgreSQL**, so Spark, MySQL and MS SQL Server scripts failed when run as more than one statement.
+- **Schema-qualified table names were quoted as one identifier**, creating a table whose name contained a dot instead of one inside the schema.
+- **Full ISO-8601 timestamps were typed as `VARCHAR`.**
+- **A custom `escapeCharacter` could throw or corrupt output**, because the setting reached a `RegExp` unescaped.
+
+### Fixed — behaviour
+
+- **"Generate SQL" said it had copied to the clipboard when it had not**, so it was possible to paste stale content believing the new script was there.
+- **Generating SQL after the data preview did nothing** — the confirm button behaved exactly like Cancel.
+- **Reopening the panel discarded text already typed** into the Convert tab.
+- **Form controls clipped their text** at the editor font sizes many people use.
+- Messages to the panel could be dropped by a timing race; CRLF input no longer leaves a carriage return inside quotes.
+
+### Security
+
+- **Selected editor text was interpolated unescaped into the data preview**, so content such as `<img src=x onerror=…>` executed. All values are escaped, and both webviews declare a Content-Security-Policy with a script nonce.
+- **Local tooling configuration was being packaged into the VSIX.**
+
+### Added
+
+- **Row comparison** on the Compare tab — a keyed diff showing added, removed, changed and unchanged rows, with the differing fields highlighted.
+- **Open in Editor** for generated SQL, so output is not clipboard-only.
+- **Remove duplicates** on the Convert tab.
+- `list-to-csv.varcharSizing` and `list-to-csv.quoteIdentifiers` settings.
+
+### Changed
+
+- Identifiers are quoted only when they need it, so `my_table` stays bare while a reserved word such as `order` is quoted. This also stops PostgreSQL producing case-sensitive identifiers by default.
+- The Convert tab is now **List → Line**.
+
+---
+
 ## [1.1.7] — 2026-08-31
 
 Pre-release. No user-visible change.

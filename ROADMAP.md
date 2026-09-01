@@ -49,10 +49,9 @@ commands later if they prove worth a keybinding.
 
 ## Phase 0 — foundations
 
-- **Parse quoted fields containing newlines.** Parsing is line-scoped: both
-  pipelines split on lines before parsing fields, so a quoted field containing
-  a newline still breaks. Real exports contain these. This blocks CSV → JSON,
-  extract-column-N and transpose, which would all inherit the defect.
+- ~~Parse quoted fields containing newlines~~ — **done in 1.1.3**.
+  `parseDelimitedText` parses the whole document rather than splitting on lines
+  first, so quoting is honoured across line breaks in both pipelines.
 - ~~Consolidate the duplicated SQL logic~~ — **done in 1.1.6**. The panel script
   moved to `src/webview/main.ts`, built as its own esbuild entry point and
   loaded via `asWebviewUri`, so it imports the same helpers the extension host
@@ -198,10 +197,9 @@ corrupting them.
 
 ### Tier 1 — silently produces wrong data
 
-- ~~Quoted fields break parsing~~ — **done in 1.1.0**, with one limitation left:
-  parsing is line-scoped, so a **quoted field containing a newline** still
-  breaks. Real exports do contain these. Fixing it means parsing the whole
-  document instead of splitting on lines first, in both code paths.
+- ~~Quoted fields break parsing~~ — **done in 1.1.0**, and the remaining
+  line-scoped limitation (a quoted field containing a newline) was closed in
+  **1.1.3** by parsing the whole document rather than splitting on lines first.
 - ~~Duplicate and invalid column identifiers~~ — **done in 1.1.0**.
 - **Ragged rows pass silently.** A row with more or fewer fields than the header
   is padded or truncated without comment. It should at least warn, and ideally
@@ -276,7 +274,18 @@ corrupting them.
 
 ### Codebase
 
-- **Consolidate the duplicated SQL helpers.** The panel's `inferType` / `fmtSqlVal` / `detectSep` are hand-maintained copies of `inferSqlDataType` / `formatSqlValue` / `detectSeparator` in `src/utils/sqlUtils.ts`, because the webview script is a template string and cannot import a module. Options: generate the script from a shared source at build time, or ship a second small esbuild bundle for the webview and load it via a `localResourceRoots` URI. Constraint: keep the bundle small — esbuild output is currently ~78 KB unminified.
+- ~~Consolidate the duplicated SQL helpers~~ — **done in 1.1.6** (see Phase 0).
+  The panel script is a real module and imports from `src/utils`; the claim that
+  it "cannot import a module" was true of the template-literal design, not of
+  webviews, and no longer applies.
+- **Type-check the panel script strictly.** `tsconfig.webview.json` sets
+  `strict: false` because the script was moved out of a template literal where
+  it had never been type-checked at all. Roughly 900 lines of DOM access need
+  annotating.
+- **Test the panel script.** `src/webview/main.ts` has no unit tests. Most of
+  the logic now lives in tested utils, but `renderDiff` and `doCountValues`
+  still hold real behaviour, and the browser harness used to verify the panel
+  is not part of CI.
 - **Reduce the command surface.** The extension contributes 9 commands and a 6-item context submenu. Consider collapsing the rarely used entries into the panel so the palette and right-click menu feel less crowded.
 
 ---
