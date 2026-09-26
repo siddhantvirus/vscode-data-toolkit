@@ -16,6 +16,7 @@ A VS Code extension built for data engineers. Convert lists, build SQL scripts, 
 | Feature | How to access |
 |---|---|
 | Convert list to CSV / SQL IN clause | Right-click selection → Data Toolkit |
+| Unwrap an IN clause, extract a column, transpose, chunk long IN lists | Right-click selection → Data Toolkit → Transform Selection… |
 | Count value occurrences (GROUP BY) | Right-click selection → Data Toolkit |
 | Remove duplicate lines | Right-click selection → Data Toolkit |
 | Compare two columns (set operations) | Right-click selection → Data Toolkit |
@@ -29,6 +30,19 @@ A VS Code extension built for data engineers. Convert lists, build SQL scripts, 
 
 Select one or more lines in any editor, right-click, and choose **Data Toolkit** from the context menu.
 
+### Transform Selection…
+One entry that opens a searchable list of transforms and applies the one you pick to the selection, in place. Type to filter; **Ctrl+Z** undoes it.
+
+| Transform | Example |
+|---|---|
+| **Unwrap IN (...) into a list** | `WHERE id IN ('O''Brien','Alice')` → `O'Brien` / `Alice`. Undoes quoting, accepts a whole predicate, and handles `N'...'` values. The exact reverse of building an IN clause. |
+| **Extract a column** | Pick a column of pasted tabular data by its header; get just that column, one value per line — ready to turn into an IN list. |
+| **Transpose rows and columns** | Rows become columns. Short rows are padded, so no value is lost. |
+| **Split a delimited row into lines** | `a,"b,c",d` → `a` / `b,c` / `d`. Quote-aware. |
+| **Build a chunked IN clause** | For lists longer than Oracle's 1000-item limit: one value per line in, `(id IN (...) OR id IN (...))` out. Chunk size is configurable, and values are left unquoted only when every one is a plain number. |
+
+New transforms are added to this list rather than as separate commands, so the palette and menu stay short.
+
 ### Convert to CSV Format
 Converts a multi-line selection into a properly formatted CSV row. Strips bullet points, numbers, and other list prefixes. Respects the delimiter setting.
 
@@ -37,6 +51,8 @@ Converts a list into a single comma-separated line. Optionally wraps each value 
 
 ### Generate SQL Table from Selection
 Select tabular data (tab- or comma-separated, with a header row) and generate a complete `CREATE TABLE` + `INSERT` script for the target SQL dialect.
+
+If any row has more or fewer fields than the header, you are warned before anything is generated and can stop. Extra fields on a long row would otherwise be dropped — usually because a value contains the delimiter without being quoted.
 
 ### Count Value Occurrences (GROUP BY)
 Select a list of values and get a `value,count` CSV copied to your clipboard — sorted by frequency descending. Equivalent to `SELECT value, COUNT(*) GROUP BY value ORDER BY 2 DESC`.
@@ -134,6 +150,8 @@ With **Size VARCHAR to sample** enabled, `"name"` becomes `VARCHAR(10)` instead.
 
 Values that only *look* numeric are kept as text, so zero-padded identifiers like `007` survive the round trip instead of being written as `7`.
 
+Rows with a different number of fields from the first row are flagged above the output, with their row numbers, rather than being padded or truncated silently.
+
 ### Tab 5 — Excel Formulas
 
 Select a formula category, choose a formula, fill in the parameters, and copy the result. A live preview updates as you type.
@@ -172,6 +190,7 @@ Open settings via `Ctrl+Shift+P` → **Data Toolkit: Open Extension Settings**.
 | Command | ID | Description |
 |---|---|---|
 | Open Toolkit | `list-to-csv.openWebview` | Open the Data Toolkit panel |
+| Transform Selection… | `list-to-csv.transform` | Pick a transform to apply to the selection in place |
 | Convert to CSV | `list-to-csv.convert` | Convert selection to CSV rows |
 | Comma Separated Line | `list-to-csv.convertToCommaLine` | Convert selection to a single line |
 | Generate SQL Table | `list-to-csv.generateSQLTable` | Generate CREATE TABLE + INSERTs |

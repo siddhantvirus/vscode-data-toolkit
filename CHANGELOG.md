@@ -6,11 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [1.2.0] — 2026-09-01
+## [1.2.0] — Unreleased
 
 First stable release since 1.0.0, promoting the 1.1.x pre-release line.
 
-Everything below shipped and was exercised on the pre-release channel first. The per-version entries are kept beneath this one; this section is the view for anyone upgrading from **1.0.0**, which is what the stable channel has been serving.
+This section is the view for anyone upgrading from **1.0.0**, which is what the stable channel has been serving. The per-version entries beneath it are kept for people following the pre-release channel. Everything here was exercised on pre-release first **except the items under _New in 1.2.0_**, which were added after 1.1.7.
+
+### New in 1.2.0
+
+- **Transform Selection…** — one command that opens a searchable list of transforms and applies the chosen one in place:
+  - **Unwrap IN (...) into a list** — the reverse of building an IN clause. Undoes doubled quotes (`'O''Brien'` → `O'Brien`), accepts a whole `WHERE` predicate, and handles `N'...'` values.
+  - **Extract a column** of tabular data by its header, one value per line.
+  - **Transpose** rows and columns, padding short rows so no value is lost.
+  - **Split a delimited row into lines**, quote-aware.
+  - **Build a chunked IN clause** for lists beyond Oracle's 1000-item limit (`ORA-01795`), OR-ing chunks of a configurable size.
+
+  New transforms will be added to this list instead of as separate commands, keeping the palette and context menu short.
+- **Rows that do not match the header are reported.** SQL generation squared every row off against the header, padding short rows and silently dropping the extra fields of long ones — usually a value containing the delimiter without quotes. The generate command now stops with a warning naming the rows and asks before continuing; the SQL Builder tab shows the same warning above its output.
 
 ### Fixed — data correctness
 

@@ -84,13 +84,13 @@ format for this audience and is absent entirely.
 
 Every existing conversion is one-directional; these restore symmetry.
 
-- **Unwrap a SQL `IN (...)` clause** back into a clean list — strips the
-  wrapper, delimiters and quoting, and undoes doubled quotes
-  (`'O''Brien'` → `O'Brien`). Completes the flagship feature.
-- **CSV row → lines**, honouring RFC 4180 quoting.
-- **Transpose** rows and columns.
-- **Extract column N** by index or header name — the common "give me just this
-  column as an IN list" need.
+All four **done in 1.2.0**, behind the `Transform Selection…` quick-pick:
+
+- ~~Unwrap a SQL `IN (...)` clause~~ — the exact inverse of building one,
+  including doubled quotes, whole `WHERE` predicates and `N'...'` values.
+- ~~CSV row → lines~~ — quote-aware.
+- ~~Transpose~~ — pads short rows, so no value is lost.
+- ~~Extract column N~~ — chosen by header from the first row.
 
 ---
 
@@ -147,8 +147,8 @@ All behind the `Transform…` quick-pick, operating in place on a selection.
 
 - **Column-list helpers** — turn a list of column names into a `SELECT` list,
   a `GROUP BY` list, or join conditions (`a.col = b.col`).
-- **`IN (...)` chunking** — split a large list into OR'd batches to stay under
-  Oracle's 1000-expression limit (`ORA-01795`); batch size configurable.
+- ~~`IN (...)` chunking~~ — **done in 1.2.0** as a transform: OR'd batches of a
+  configurable size, 1000 by default for Oracle's limit (`ORA-01795`).
 - **Query scaffolds** — pivot via `CASE WHEN`, window functions
   (`ROW_NUMBER`/`RANK`/`LAG`/`LEAD`), and a date-spine/calendar table.
 
@@ -201,17 +201,17 @@ corrupting them.
   line-scoped limitation (a quoted field containing a newline) was closed in
   **1.1.3** by parsing the whole document rather than splitting on lines first.
 - ~~Duplicate and invalid column identifiers~~ — **done in 1.1.0**.
-- **Ragged rows pass silently.** A row with more or fewer fields than the header
-  is padded or truncated without comment. It should at least warn, and ideally
-  report the offending line numbers.
+- ~~Ragged rows pass silently~~ — **done in 1.2.0**. The generate command warns
+  and asks before continuing, naming the rows; the SQL Builder tab shows the
+  same warning above its output. Tier 1 is now clear.
 
 ### Tier 2 — breaks at the scale that motivates using a tool
 
 - **IN clause exceeds engine limits.** Oracle rejects more than 1000 expressions
   (`ORA-01795`); SQL Server degrades badly on very large literal lists. Pasting
   5,000 ids — precisely the case the feature exists for — produces SQL that
-  fails. Offer chunking into batches of N (`col IN (...) OR col IN (...)`), or
-  emit a `VALUES` CTE or temp table instead.
+  fails. **Chunking done in 1.2.0** (`col IN (...) OR col IN (...)`); emitting a
+  `VALUES` CTE or temp table instead remains open.
 - **SQL Server caps `INSERT ... VALUES` at 1000 rows.** The table value
   constructor the code uses has a hard limit, so large pastes generate a script
   the engine rejects. Batch into multiple statements.
@@ -284,9 +284,10 @@ corrupting them.
   annotating.
 - **Test the panel script.** `src/webview/main.ts` has no unit tests. Most of
   the logic now lives in tested utils, but `renderDiff` and `doCountValues`
-  still hold real behaviour, and the browser harness used to verify the panel
-  is not part of CI.
-- **Reduce the command surface.** The extension contributes 9 commands and a 6-item context submenu. Consider collapsing the rarely used entries into the panel so the palette and right-click menu feel less crowded.
+  still hold real behaviour. The browser harness that renders the panel is now
+  committed as `scripts/render-panel.js` (it had been lost from a scratch
+  directory), but it is not run in CI — that needs a headless browser.
+- **Reduce the command surface.** The extension contributes 10 commands and a 7-item context submenu. New transforms now go behind `Transform Selection…` instead of adding to this; some existing entries could move there too. Consider collapsing the rarely used entries into the panel so the palette and right-click menu feel less crowded.
 
 ---
 

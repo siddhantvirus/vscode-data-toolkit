@@ -19,6 +19,7 @@ import {
 } from './utils/sqlUtils';
 import { escapeHtml, escapeRegExp, getNonce } from './utils/htmlUtils';
 import { openSqlInEditor } from './utils/editorUtils';
+import { registerTransformCommand } from './transformCommand';
 
 interface ConversionOptions {
     delimiter: string;
@@ -426,7 +427,8 @@ export function activate(context: vscode.ExtensionContext) {
         lastUsedConfigCommand,
         countValuesCommand,
         removeDuplicatesCommand,
-        compareColumnsCommand
+        compareColumnsCommand,
+        registerTransformCommand()
     );
 }
 

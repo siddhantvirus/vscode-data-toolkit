@@ -20,6 +20,14 @@ import {
 import { escapeHtml, escapeRegExp, getNonce } from '../utils/htmlUtils';
 import { diffRows, suggestKeyColumn } from '../utils/diffUtils';
 import {
+	buildChunkedInClause,
+	extractColumn,
+	formatDelimitedRow,
+	splitIntoValues,
+	transposeTable,
+	unwrapInClause
+} from '../utils/transformUtils';
+import {
 	convertToCommaLine,
 	createSqlTableStatement,
 	formatCSVCell,
@@ -617,6 +625,105 @@ suite('sqlUtils — joinAsDelimitedLine', () => {
 	});
 });
 
+suite('transformUtils — unwrapInClause', () => {
+	test('undoes doubled quotes', () => {
+		assert.deepStrictEqual(unwrapInClause("IN ('O''Brien','Alice')"), ["O'Brien", 'Alice']);
+	});
+
+	test('accepts a whole WHERE predicate with unquoted numbers', () => {
+		assert.deepStrictEqual(unwrapInClause('WHERE id IN (1, 2, 3)'), ['1', '2', '3']);
+	});
+
+	test('commas and parentheses inside quotes belong to the value', () => {
+		assert.deepStrictEqual(unwrapInClause("IN ('a, b', 'c (d)')"), ['a, b', 'c (d)']);
+	});
+
+	test('handles double quotes, the T-SQL N prefix and a trailing comma', () => {
+		assert.deepStrictEqual(unwrapInClause('IN ("x", "y")'), ['x', 'y']);
+		assert.deepStrictEqual(unwrapInClause("IN (N'abc', N'd')"), ['abc', 'd']);
+		assert.deepStrictEqual(unwrapInClause("IN (\n  'a',\n  'b',\n)"), ['a', 'b']);
+	});
+
+	test('takes only the first of several IN clauses', () => {
+		assert.deepStrictEqual(unwrapInClause("x IN ('a') AND y IN ('b')"), ['a']);
+	});
+
+	test('a quoted empty string is kept as a value', () => {
+		assert.deepStrictEqual(unwrapInClause("IN ('', 'a')"), ['', 'a']);
+	});
+
+	test('is the exact inverse of building the clause', () => {
+		const values = ["O'Brien", 'a,b', 'x'];
+		const clause = joinAsDelimitedLine(values, { separator: ',', enclosure: "'", sqlInClause: true });
+		assert.deepStrictEqual(unwrapInClause(clause), values);
+	});
+
+	test('an empty clause is an error, not an empty result', () => {
+		assert.throws(() => unwrapInClause('IN ()'));
+	});
+});
+
+suite('transformUtils — tables', () => {
+	const table = [['id', 'name'], ['1', 'Alice'], ['2']];
+
+	test('extractColumn skips the header when asked and pads short rows', () => {
+		assert.deepStrictEqual(extractColumn(table, 1, true), ['Alice', '']);
+		assert.deepStrictEqual(extractColumn(table, 0, false), ['id', '1', '2']);
+	});
+
+	test('extractColumn rejects a column that does not exist', () => {
+		assert.throws(() => extractColumn(table, 5, true));
+	});
+
+	test('transposeTable pads ragged rows and loses nothing', () => {
+		assert.deepStrictEqual(transposeTable(table), [['id', '1', '2'], ['name', 'Alice', '']]);
+	});
+
+	test('formatDelimitedRow quotes per RFC 4180 so the output parses back', () => {
+		const line = formatDelimitedRow(['a', 'b,c', 'say "hi"'], ',');
+		assert.strictEqual(line, 'a,"b,c","say ""hi"""');
+		assert.deepStrictEqual(parseDelimitedLine(line, ','), ['a', 'b,c', 'say "hi"']);
+	});
+
+	test('splitIntoValues is quote-aware and flattens rows', () => {
+		assert.deepStrictEqual(splitIntoValues('a,"b,c",d'), ['a', 'b,c', 'd']);
+		assert.deepStrictEqual(splitIntoValues('a\tb\nc\td'), ['a', 'b', 'c', 'd']);
+		assert.deepStrictEqual(splitIntoValues('one\n\ntwo'), ['one', 'two']);
+	});
+});
+
+suite('transformUtils — buildChunkedInClause', () => {
+	test('a list within the limit needs no wrapper', () => {
+		assert.strictEqual(
+			buildChunkedInClause(['a', 'b'], { column: 'id', chunkSize: 1000 }),
+			"id IN ('a', 'b')"
+		);
+	});
+
+	test('longer lists are split into OR-ed chunks and wrapped', () => {
+		assert.strictEqual(
+			buildChunkedInClause(['1', '2', '3'], { column: 'id', chunkSize: 2 }),
+			'(id IN (1, 2)\n OR id IN (3))'
+		);
+	});
+
+	test('2,500 ids at the Oracle limit become three chunks', () => {
+		const ids = Array.from({ length: 2500 }, (_, i) => String(i + 1));
+		const sql = buildChunkedInClause(ids, { column: 'id', chunkSize: 1000 });
+		assert.strictEqual((sql.match(/ IN \(/g) || []).length, 3);
+	});
+
+	test('zero-padded values stay quoted and quotes are escaped', () => {
+		assert.ok(buildChunkedInClause(['007', '8'], { column: 'id', chunkSize: 10 }).includes("'007'"));
+		assert.ok(buildChunkedInClause(["O'Brien"], { column: 'n', chunkSize: 5 }).includes("'O''Brien'"));
+	});
+
+	test('rejects a bad chunk size or missing column', () => {
+		assert.throws(() => buildChunkedInClause(['a'], { column: 'id', chunkSize: 0 }));
+		assert.throws(() => buildChunkedInClause(['a'], { column: ' ', chunkSize: 10 }));
+	});
+});
+
 suite('Extension', () => {
 	test('all contributed commands are registered on activation', async () => {
 		// Commands are contributed with no activation events, so nothing has
@@ -630,6 +737,7 @@ suite('Extension', () => {
 		const registered = await vscode.commands.getCommands(true);
 		const expected = [
 			'list-to-csv.openWebview',
+			'list-to-csv.transform',
 			'list-to-csv.convert',
 			'list-to-csv.convertToCommaLine',
 			'list-to-csv.generateSQLTable',
