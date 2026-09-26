@@ -8,6 +8,9 @@ import {
     inferSqlDataType,
     joinAsDelimitedLine,
     detectSeparator,
+    describeRaggedRows,
+    findRaggedRows,
+    RaggedRow,
     parseDelimitedText,
     sanitizeColumnNames,
     quoteIdentifier,
@@ -185,8 +188,12 @@ export function activate(context: vscode.ExtensionContext) {
                 }
                 
                 // Parse the data for preview or SQL generation
-                const { headers, dataLines } = parseSqlTabularData(selectedText, options.includeHeaders);
-                
+                const { headers, dataLines, ragged, expectedFields } =
+                    parseSqlTabularData(selectedText, options.includeHeaders);
+                if (!await confirmRaggedRows(ragged, expectedFields)) {
+                    return;
+                }
+
                 // Show preview if requested
                 if (options.previewData) {
                     const previewResult = await showDataPreviewWebview(headers, dataLines, options, context);
@@ -288,7 +295,11 @@ export function activate(context: vscode.ExtensionContext) {
                     const sqlConfig = config as SqlTableOptions;
                     
                     // Parse the data for preview or SQL generation
-                    const { headers, dataLines } = parseSqlTabularData(selectedText, sqlConfig.includeHeaders);
+                    const { headers, dataLines, ragged, expectedFields } =
+                        parseSqlTabularData(selectedText, sqlConfig.includeHeaders);
+                    if (!await confirmRaggedRows(ragged, expectedFields)) {
+                        return;
+                    }
                     
                     if (sqlConfig.previewData) {
                         const previewResult = await showDataPreviewWebview(headers, dataLines, sqlConfig, context);
@@ -835,7 +846,10 @@ export function createSqlTableStatement(
  * @param text The text to parse
  * @param hasHeaders Whether the first row contains headers (default: true)
  */
-export function parseSqlTabularData(text: string, hasHeaders: boolean = true): { headers: string[], dataLines: string[][] } {
+export function parseSqlTabularData(
+    text: string,
+    hasHeaders: boolean = true
+): { headers: string[], dataLines: string[][], ragged: RaggedRow[], expectedFields: number } {
     // Split text into lines and remove empty lines
     const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
     
@@ -846,9 +860,10 @@ export function parseSqlTabularData(text: string, hasHeaders: boolean = true): {
     // Try to detect if the data is tabular (tab, comma, pipe or space aligned)
     const separator = detectSeparator(lines[0]);
 
-    const firstLine = lines[0];
     let headers: string[] = [];
     let dataLines: string[][] = [];
+    let ragged: RaggedRow[] = [];
+    let expectedFields = 1;
 
     if (separator) {
         // Parse the whole document, not line by line: quoting is honoured
@@ -858,6 +873,10 @@ export function parseSqlTabularData(text: string, hasHeaders: boolean = true): {
         if (rows.length === 0) {
             throw new Error('No valid data found');
         }
+
+        // Record rows that squaring off below would pad or truncate, so the
+        // caller can say so instead of silently dropping data.
+        ({ ragged, expected: expectedFields } = findRaggedRows(rows));
 
         if (hasHeaders) {
             headers = rows[0];
@@ -880,7 +899,25 @@ export function parseSqlTabularData(text: string, hasHeaders: boolean = true): {
     // Valid, unique SQL identifiers
     headers = sanitizeColumnNames(headers);
 
-    return { headers, dataLines };
+    return { headers, dataLines, ragged, expectedFields };
+}
+
+/**
+ * Warn before generating SQL from ragged input, and let the user stop.
+ *
+ * Returns true when generation should continue. Squaring rows off drops the
+ * extra fields of long rows, so this is a confirmation rather than a notice.
+ */
+async function confirmRaggedRows(ragged: RaggedRow[], expectedFields: number): Promise<boolean> {
+    if (ragged.length === 0) {
+        return true;
+    }
+    const choice = await vscode.window.showWarningMessage(
+        'Some rows do not match the header',
+        { modal: true, detail: describeRaggedRows(ragged, expectedFields) },
+        'Generate Anyway'
+    );
+    return choice === 'Generate Anyway';
 }
 
 /**

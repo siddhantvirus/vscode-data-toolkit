@@ -139,6 +139,47 @@ export function parseDelimitedLine(line: string, separator: string | RegExp): st
     return fields;
 }
 
+/** A parsed row whose field count differs from the first row's. */
+export interface RaggedRow {
+    /** 1-based position among the parsed rows, first row included. */
+    row: number;
+    /** How many fields the row actually has. */
+    fields: number;
+}
+
+/**
+ * Find rows whose width differs from the first row's.
+ *
+ * Tabular generation squares every row off against the header: short rows are
+ * padded and long rows are truncated. Doing that silently loses data — the
+ * usual cause of a long row is a value containing the delimiter without
+ * quotes, so the truncated field is real data, not noise.
+ */
+export function findRaggedRows(table: string[][]): { expected: number; ragged: RaggedRow[] } {
+    const expected = table.length > 0 ? table[0].length : 0;
+    const ragged: RaggedRow[] = [];
+    table.forEach((row, i) => {
+        if (row.length !== expected) {
+            ragged.push({ row: i + 1, fields: row.length });
+        }
+    });
+    return { expected, ragged };
+}
+
+/** Human-readable summary of ragged rows, shared by the command and the panel. */
+export function describeRaggedRows(ragged: RaggedRow[], expected: number): string {
+    const shown = ragged.slice(0, 5)
+        .map(r => `row ${r.row} has ${r.fields}`)
+        .join(', ');
+    const more = ragged.length > 5 ? `, and ${ragged.length - 5} more` : '';
+    const plural = ragged.length === 1 ? 'row does' : 'rows do';
+
+    return `${ragged.length} ${plural} not have ${expected} field${expected === 1 ? '' : 's'} ` +
+        `like the first row (${shown}${more}). Short rows are filled with empty values; ` +
+        `extra fields on long rows are dropped. A value containing the delimiter ` +
+        `without quotes is the usual cause.`;
+}
+
 /**
  * Turn raw headers into valid, unique SQL identifiers.
  *

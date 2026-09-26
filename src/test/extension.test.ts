@@ -2,7 +2,9 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 
 import {
+	describeRaggedRows,
 	detectSeparator,
+	findRaggedRows,
 	formatSqlValue,
 	getDefaultDataType,
 	inferSqlDataType,
@@ -199,6 +201,31 @@ suite('sqlUtils — parseDelimitedText', () => {
 
 	test('an unterminated quote degrades gracefully', () => {
 		assert.deepStrictEqual(parseDelimitedText('1,"oops\n2,x', ','), [['1', 'oops\n2,x']]);
+	});
+});
+
+suite('sqlUtils — ragged rows', () => {
+	test('a uniform table has no ragged rows', () => {
+		const { expected, ragged } = findRaggedRows([['a', 'b'], ['1', '2'], ['3', '4']]);
+		assert.strictEqual(expected, 2);
+		assert.deepStrictEqual(ragged, []);
+	});
+
+	test('short and long rows are both reported, with their position and width', () => {
+		const { ragged } = findRaggedRows([['a', 'b', 'c'], ['1', '2'], ['1', '2', '3', '4']]);
+		assert.deepStrictEqual(ragged, [{ row: 2, fields: 2 }, { row: 3, fields: 4 }]);
+	});
+
+	test('the description names the rows and says data is dropped', () => {
+		const text = describeRaggedRows([{ row: 3, fields: 4 }], 3);
+		assert.ok(text.includes('row 3 has 4'), text);
+		assert.ok(/dropped/.test(text), text);
+	});
+
+	test('long lists are abbreviated rather than listing every row', () => {
+		const ragged = Array.from({ length: 8 }, (_, i) => ({ row: i + 2, fields: 1 }));
+		const text = describeRaggedRows(ragged, 2);
+		assert.ok(text.includes('and 3 more'), text);
 	});
 });
 
@@ -492,6 +519,13 @@ suite('extension — parseSqlTabularData', () => {
 	test('headers are made valid and unique', () => {
 		const { headers } = parseSqlTabularData('Region,Region,2024 Revenue\na,b,c');
 		assert.deepStrictEqual(headers, ['Region', 'Region_2', 'col_2024_Revenue']);
+	});
+
+	test('ragged rows are reported instead of being squared off silently', () => {
+		// Previously padded or truncated with no warning; a long row lost data.
+		const { ragged, expectedFields } = parseSqlTabularData('a,b,c\n1,2\n1,2,3,4');
+		assert.strictEqual(expectedFields, 3);
+		assert.deepStrictEqual(ragged, [{ row: 2, fields: 2 }, { row: 3, fields: 4 }]);
 	});
 
 	test('rows are squared off against the header count', () => {
