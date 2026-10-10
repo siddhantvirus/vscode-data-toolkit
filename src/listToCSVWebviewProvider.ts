@@ -162,7 +162,7 @@ body {
 
 /* ── Form elements ───────────────────────────────── */
 label { display: block; margin-bottom: 4px; font-size: 12px; font-weight: 500; }
-textarea, input[type="text"], select {
+textarea, input[type="text"], input[type="number"], select {
     width: 100%;
     border: 1px solid var(--vscode-input-border);
     border-radius: var(--r);
@@ -183,7 +183,7 @@ textarea {
    --vscode-editor-font-size, which the user controls and is commonly 15-16px,
    inside a fixed 28px box that (with border-box) left only 14px of content —
    so the text clipped. min-height cannot clip, whatever the font size. */
-input[type="text"], select {
+input[type="text"], input[type="number"], select {
     padding: 4px 8px;
     min-height: 28px;
     font-family: var(--vscode-font-family);
@@ -218,6 +218,8 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
     border: 1px solid var(--vscode-panel-border);
     border-radius: var(--r); padding: 10px 12px;
 }
+.option-field { margin-top: 8px; }
+.option-field label { font-weight: 400; }
 .option-card h4 { margin: 0 0 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; opacity: .7; }
 
 .output-pre {
@@ -512,11 +514,14 @@ td.cell-changed { background: rgba(229,192,123,.16); }
             <div class="checkbox-row"><input type="checkbox" id="sqlInferTypes" checked><label for="sqlInferTypes">Auto-detect column types</label></div>
             <div class="checkbox-row"><input type="checkbox" id="sqlSizeVarchar"><label for="sqlSizeVarchar" title="Off: VARCHAR(255). On: sized to the widest pasted value — tighter, but can truncate data outside the sample.">Size VARCHAR to sample</label></div>
             <div class="checkbox-row"><input type="checkbox" id="sqlAlwaysQuote"><label for="sqlAlwaysQuote" title="Off: only names that need it are quoted. On: every table and column name is quoted.">Always quote identifiers</label></div>
+            <div class="option-field"><label for="sqlNullValues" title="Cells exactly matching one of these, comma-separated, are written as NULL. Empty cells always are.">Treat as NULL:</label><input type="text" id="sqlNullValues" value="NULL, \\N"></div>
         </div>
         <div class="option-card">
             <h4>Generate</h4>
             <div class="checkbox-row"><input type="checkbox" id="sqlGenCreate" checked><label for="sqlGenCreate">CREATE TABLE</label></div>
             <div class="checkbox-row"><input type="checkbox" id="sqlGenInsert" checked><label for="sqlGenInsert">INSERT statements</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="sqlDropTable"><label for="sqlDropTable" title="Start with DROP TABLE IF EXISTS so the script can be re-run. Running it deletes the existing table and its data.">DROP TABLE IF EXISTS</label></div>
+            <div class="option-field"><label for="sqlBatchSize" title="SQL Server rejects a VALUES list of more than 1000 rows.">Rows per INSERT:</label><input type="number" id="sqlBatchSize" value="1000" min="1"></div>
         </div>
     </div>
     <div class="btn-row">

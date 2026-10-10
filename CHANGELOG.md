@@ -29,6 +29,14 @@ This section is the view for anyone upgrading from **1.0.0**, which is what the 
   - **Extract a JSON field into a list** by path (`$.data[*].id`, or just `id`), ready for an `IN (...)` clause.
 
   Long numeric ids are kept exactly. `JSON.parse` rounds anything past 2^53, so `1234567890123456789` would have become `1234567890123456800` in the generated SQL; the extension reads numbers as written instead.
+- **SQL that survives real exports:**
+  - **Long ids get `BIGINT`.** A column with any value past ±2,147,483,647 was typed `INT`, so the INSERT failed on overflow; past BIGINT's range it is now `DECIMAL(38,0)`.
+  - **Decimals are exact.** `FLOAT` (SQL Server, MySQL) and `DOUBLE` (Spark) became `DECIMAL(38,s)`, with the scale taken from the data — binary floats store `0.1` inexactly, which is wrong for money. PostgreSQL keeps its unconstrained `DECIMAL`.
+  - **`true`/`false` columns are boolean** — `BOOLEAN`, or `BIT` on SQL Server — with values written as `TRUE`/`FALSE` or `1`/`0`. MySQL rejected the quoted `'true'` that was emitted before. `0`/`1` and `Y`/`N` are left alone, since they are as often counts or codes.
+  - **`NULL` and `\N` cells become SQL `NULL`** instead of the strings `'NULL'` and `'\N'`. Configurable with `list-to-csv.nullValues` (add `NA`, `None`, `nan` for R and pandas) and in the SQL Builder.
+  - **INSERTs are split into batches** of 1000 rows by default — SQL Server rejects a larger `VALUES` list. `list-to-csv.insertBatchSize`, and **Rows per INSERT** in the panel.
+  - **Optional `DROP TABLE IF EXISTS`**, so a script can be re-run. Off by default. `list-to-csv.dropTableIfExists`, and a checkbox in the panel.
+  - **Semicolon-delimited files are recognised.** Excel writes them in locales that use a decimal comma; they were read as a single column.
 - **Rows that do not match the header are reported.** SQL generation squared every row off against the header, padding short rows and silently dropping the extra fields of long ones — usually a value containing the delimiter without quotes. The generate command now stops with a warning naming the rows and asks before continuing; the SQL Builder tab shows the same warning above its output.
 
 ### Fixed — data correctness

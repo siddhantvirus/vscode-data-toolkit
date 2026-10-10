@@ -170,6 +170,28 @@
           ],
           "default": "auto",
           "description": "When to wrap table and column names in the dialect's identifier quotes when generating SQL."
+        },
+        "list-to-csv.nullValues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "NULL",
+            "\\N"
+          ],
+          "markdownDescription": "Cell values written as SQL `NULL` when generating SQL, matched exactly after trimming. `NULL` comes from SQL tools and `\\N` from MySQL and PostgreSQL dumps; add `NA`, `None` or `nan` for R and pandas exports. Empty cells are always NULL."
+        },
+        "list-to-csv.insertBatchSize": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1000,
+          "markdownDescription": "Maximum rows per `INSERT` statement when generating SQL. SQL Server rejects a `VALUES` list of more than 1000 rows."
+        },
+        "list-to-csv.dropTableIfExists": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Start generated SQL with `DROP TABLE IF EXISTS`, so the script can be run again. Off by default, because running it drops the existing table and its data."
         }
       }
     }

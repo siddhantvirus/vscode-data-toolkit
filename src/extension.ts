@@ -15,7 +15,11 @@ import {
     sanitizeColumnNames,
     quoteIdentifier,
     IdentifierQuoting,
-    VarcharSizing
+    VarcharSizing,
+    applyNullValues,
+    batchRows,
+    dropTableStatement,
+    DEFAULT_NULL_VALUES
 } from './utils/sqlUtils';
 import { escapeHtml, escapeRegExp, getNonce } from './utils/htmlUtils';
 import { openSqlInEditor } from './utils/editorUtils';
@@ -771,6 +775,12 @@ async function getSqlTableOptions(askAboutHeaders = true): Promise<SqlTableOptio
 export interface SqlGenerationSettings {
     varcharSizing: VarcharSizing;
     quoting: IdentifierQuoting;
+    /** Cell values written as NULL, such as `NULL` and `\N`. */
+    nullValues?: string[];
+    /** Rows per INSERT statement; SQL Server rejects more than 1000. */
+    insertBatchSize?: number;
+    /** Start the script with DROP TABLE IF EXISTS, so it can be re-run. */
+    dropTableIfExists?: boolean;
 }
 
 /**
@@ -784,7 +794,10 @@ export function readSqlGenerationSettings(): SqlGenerationSettings {
     const config = vscode.workspace.getConfiguration('list-to-csv');
     return {
         varcharSizing: config.get<VarcharSizing>('varcharSizing', 'fixed'),
-        quoting: config.get<IdentifierQuoting>('quoteIdentifiers', 'auto')
+        quoting: config.get<IdentifierQuoting>('quoteIdentifiers', 'auto'),
+        nullValues: config.get<string[]>('nullValues', DEFAULT_NULL_VALUES),
+        insertBatchSize: config.get<number>('insertBatchSize', 1000),
+        dropTableIfExists: config.get<boolean>('dropTableIfExists', false)
     };
 }
 
@@ -795,20 +808,36 @@ export function createSqlTableStatement(
     settings: SqlGenerationSettings
 ): string {
     const { tableName, dialect, inferDataTypes } = options;
-    const { varcharSizing, quoting } = settings;
+    const {
+        varcharSizing,
+        quoting,
+        nullValues = DEFAULT_NULL_VALUES,
+        insertBatchSize = 1000,
+        dropTableIfExists = false
+    } = settings;
 
     const quote = (name: string) => quoteIdentifier(name, dialect, quoting);
 
+    // NULL tokens become empty cells first, so inference ignores them and
+    // they are written as NULL like any other empty value.
+    const rowsToInsert = applyNullValues(sampleData, nullValues);
+
+    // Inferred once and shared by CREATE and INSERT: a boolean column's
+    // values are written differently from text.
+    const columnTypes = headers.map((_, i) =>
+        inferDataTypes && rowsToInsert.length > 0
+            ? inferSqlDataType(rowsToInsert, i, dialect, varcharSizing)
+            : getDefaultDataType(dialect)
+    );
+
+    let sql = dropTableIfExists ? dropTableStatement(quote(tableName)) + '\n\n' : '';
+
     // Start building the SQL statement
-    let sql = `CREATE TABLE ${quote(tableName)} (\n`;
+    sql += `CREATE TABLE ${quote(tableName)} (\n`;
 
     // Add columns
     for (let i = 0; i < headers.length; i++) {
-        const dataType = inferDataTypes && sampleData.length > 0
-            ? inferSqlDataType(sampleData, i, dialect, varcharSizing)
-            : getDefaultDataType(dialect);
-
-        sql += `    ${quote(headers[i])} ${dataType}`;
+        sql += `    ${quote(headers[i])} ${columnTypes[i]}`;
         sql += i < headers.length - 1 ? ',\n' : '\n';
     }
     
@@ -830,18 +859,18 @@ export function createSqlTableStatement(
     // multi-row VALUES form, so one code path covers all four — the previous
     // four near-identical branches differed only in identifier quoting, and
     // drifted (only postgres terminated its statement).
-    if (sampleData.length > 0) {
+    if (rowsToInsert.length > 0) {
         const columnList = headers.map(quote).join(', ');
-        const rows = sampleData.map(row =>
+        const rows = rowsToInsert.map(row =>
             '    (' + headers
-                .map((_, j) => formatSqlValue(j < row.length ? row[j] : '', inferDataTypes))
+                .map((_, j) => formatSqlValue(j < row.length ? row[j] : '', inferDataTypes, columnTypes[j]))
                 .join(', ') + ')'
         );
 
         sql += '\n\n-- Insert data into table\n';
-        sql += `INSERT INTO ${quote(tableName)} (${columnList}) VALUES\n`;
-        sql += rows.join(',\n');
-        sql += ';\n';
+        sql += batchRows(rows, insertBatchSize)
+            .map(batch => `INSERT INTO ${quote(tableName)} (${columnList}) VALUES\n${batch.join(',\n')};\n`)
+            .join('\n');
     }
 
     return sql;

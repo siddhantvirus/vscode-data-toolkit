@@ -229,11 +229,19 @@ export function isPlainNumber(value: string): boolean {
  * Format SQL value based on its content
  * @param value The value to format
  * @param inferDataTypes Whether to infer data types
+ * @param columnType The column's inferred type. A boolean column's values are
+ * written as keywords: a quoted 'true' is rejected by MySQL's BOOLEAN, which is
+ * really TINYINT(1).
  * @returns The formatted SQL value
  */
-export function formatSqlValue(value: string, inferDataTypes: boolean): string {
+export function formatSqlValue(value: string, inferDataTypes: boolean, columnType?: string): string {
     if (!value || value.trim() === '') {
         return 'NULL';
+    }
+
+    if (inferDataTypes && columnType && isBooleanType(columnType) && BOOLEAN_PATTERN.test(value.trim())) {
+        const truthy = /^true$/i.test(value.trim());
+        return columnType === 'BIT' ? (truthy ? '1' : '0') : (truthy ? 'TRUE' : 'FALSE');
     }
 
     // Emit unquoted numeric literals only for values that are unambiguously
@@ -424,6 +432,8 @@ export function inferSqlDataType(
     let allNumbers = true;
     let allIntegers = true;
     let maxLength = 0;
+    let maxIntegerDigits = 0;
+    let maxScale = 0;
 
     for (const value of sampleValues) {
         maxLength = Math.max(maxLength, value.length);
@@ -431,13 +441,21 @@ export function inferSqlDataType(
         if (!isPlainNumber(value)) {
             allNumbers = false;
             allIntegers = false;
-        } else if (!Number.isInteger(Number(value))) {
+            continue;
+        }
+        // Measured on the text, not Number(value): a double cannot hold a
+        // 19-digit id exactly, and that is the case this exists to catch.
+        const [whole, fraction = ''] = value.trim().replace(/^-/, '').split('.');
+        maxIntegerDigits = Math.max(maxIntegerDigits, whole.length);
+        maxScale = Math.max(maxScale, fraction.length);
+        if (fraction !== '') {
             allIntegers = false;
         }
     }
 
     const allDates = sampleValues.every(value => DATE_PATTERN.test(value));
     const allTimestamps = sampleValues.every(value => TIMESTAMP_PATTERN.test(value));
+    const allBooleans = sampleValues.every(value => BOOLEAN_PATTERN.test(value.trim()));
 
     // Only size from the sample when explicitly asked. A paste is usually a
     // subset of the real data, so a width derived from it can be too narrow.
@@ -445,37 +463,115 @@ export function inferSqlDataType(
         ? Math.min(255, Math.max(10, Math.ceil(maxLength * 1.5 / 10) * 10))
         : 255;
 
+    // INT holds ±2,147,483,647. Wider ids need BIGINT, and anything past
+    // BIGINT's 19 digits only fits an exact DECIMAL.
+    const integerType = (int: string, bigint: string) => {
+        if (allIntegers && sampleValues.every(fitsInt32)) { return int; }
+        return maxIntegerDigits <= 18 || sampleValues.every(fitsInt64) ? bigint : 'DECIMAL(38,0)';
+    };
+    // Exact DECIMAL rather than FLOAT/DOUBLE: a binary float turns 0.1 into
+    // 0.1000000000000000055…, which is wrong for money and fails equality
+    // checks. Scale comes from the sample; precision is the maximum, so
+    // values with more integer digits than the sample still fit.
+    const decimalType = `DECIMAL(38,${Math.min(maxScale, 37)})`;
+
     switch (dialect) {
         case 'mssql':
             if (allTimestamps) { return 'DATETIME'; }
             if (allDates) { return 'DATE'; }
-            if (allIntegers) { return 'INT'; }
-            if (allNumbers) { return 'FLOAT'; }
+            if (allBooleans) { return 'BIT'; }
+            if (allIntegers) { return integerType('INT', 'BIGINT'); }
+            if (allNumbers) { return decimalType; }
             return maxLength <= 255 ? `VARCHAR(${varcharSize})` : 'TEXT';
 
         case 'mysql':
             if (allTimestamps) { return 'DATETIME'; }
             if (allDates) { return 'DATE'; }
-            if (allIntegers) { return 'INT'; }
-            if (allNumbers) { return 'FLOAT'; }
+            if (allBooleans) { return 'BOOLEAN'; }
+            if (allIntegers) { return integerType('INT', 'BIGINT'); }
+            if (allNumbers) { return decimalType; }
             return maxLength <= 255 ? `VARCHAR(${varcharSize})` : 'TEXT';
 
         case 'postgres':
             if (allTimestamps) { return 'TIMESTAMP'; }
             if (allDates) { return 'DATE'; }
-            if (allIntegers) { return 'INTEGER'; }
+            if (allBooleans) { return 'BOOLEAN'; }
+            if (allIntegers) { return integerType('INTEGER', 'BIGINT'); }
+            // PostgreSQL's unconstrained DECIMAL is exact at any scale.
             if (allNumbers) { return 'DECIMAL'; }
             return maxLength <= 255 ? `VARCHAR(${varcharSize})` : 'TEXT';
 
         case 'spark':
             if (allTimestamps) { return 'TIMESTAMP'; }
             if (allDates) { return 'DATE'; }
-            if (allIntegers) { return 'INT'; }
-            if (allNumbers) { return 'DOUBLE'; }
+            if (allBooleans) { return 'BOOLEAN'; }
+            if (allIntegers) { return integerType('INT', 'BIGINT'); }
+            if (allNumbers) { return decimalType; }
             return 'STRING';
     }
 
     return getDefaultDataType(dialect);
+}
+
+/**
+ * Only the words true and false. `0`/`1` and `Y`/`N` are as likely to be
+ * counts or codes as flags, so they are left to the numeric and text rules.
+ */
+const BOOLEAN_PATTERN = /^(?:true|false)$/i;
+
+function fitsInt32(value: string): boolean {
+    const n = Number(value);
+    return n >= -2147483648 && n <= 2147483647;
+}
+
+function fitsInt64(value: string): boolean {
+    const n = BigInt(value.trim());
+    return n >= -9223372036854775808n && n <= 9223372036854775807n;
+}
+
+/** Whether a column type is boolean, whose values are written as keywords rather than strings. */
+export function isBooleanType(type: string): boolean {
+    return type === 'BOOLEAN' || type === 'BIT';
+}
+
+/**
+ * Tokens that mean NULL in common exports, offered as the default for
+ * `list-to-csv.nullValues`: `NULL` from SQL tools, `\N` from MySQL and
+ * PostgreSQL dumps. Matched exactly, so the name "Null" is not affected.
+ */
+export const DEFAULT_NULL_VALUES = ['NULL', '\\N'];
+
+/**
+ * Replace cells that are NULL tokens with empty values, which every later step
+ * already writes as NULL and leaves out of type inference.
+ */
+export function applyNullValues(rows: string[][], nullValues: string[]): string[][] {
+    const tokens = new Set(nullValues.filter(token => token !== ''));
+    if (tokens.size === 0) {
+        return rows;
+    }
+    return rows.map(row => row.map(cell => (tokens.has(cell.trim()) ? '' : cell)));
+}
+
+/**
+ * Split rows into batches for separate INSERT statements.
+ *
+ * SQL Server rejects a VALUES list of more than 1000 rows (error 10738), and
+ * other engines slow down or hit packet limits on very large single
+ * statements.
+ */
+export function batchRows<T>(rows: T[], batchSize: number): T[][] {
+    const size = Number.isInteger(batchSize) && batchSize > 0 ? batchSize : rows.length || 1;
+    const batches: T[][] = [];
+    for (let start = 0; start < rows.length; start += size) {
+        batches.push(rows.slice(start, start + size));
+    }
+    return batches;
+}
+
+/** `DROP TABLE IF EXISTS`, which all four dialects support (SQL Server from 2016). */
+export function dropTableStatement(quotedTableName: string): string {
+    return `DROP TABLE IF EXISTS ${quotedTableName};`;
 }
 
 /**
@@ -496,11 +592,18 @@ export function detectSeparator(line: string): string | RegExp | null {
     if (line.includes('\t')) {
         return '\t'; // Tab has highest priority if present
     }
-    if (line.includes(',')) {
-        return ',';  // Comma is very common for CSV data
-    }
-    if (line.includes('|')) {
-        return '|';  // Pipe for markdown tables
+
+    // Otherwise the most frequent of comma, pipe and semicolon, ties going in
+    // that order. Semicolons matter because Excel uses them in locales where
+    // the comma is the decimal separator, so `id;amount` must not lose to a
+    // stray comma inside a header.
+    const counts = [',', '|', ';'].map(separator => ({
+        separator,
+        count: line.split(separator).length - 1
+    }));
+    const best = counts.reduce((a, b) => (b.count > a.count ? b : a));
+    if (best.count > 0) {
+        return best.separator;
     }
     if (/\s{2,}/.test(line)) {
         return /\s{2,}/; // Space-aligned columns

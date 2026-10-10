@@ -11,7 +11,10 @@ import {
     detectSeparator as detectSep,
     formatSqlValue as fmtSqlVal,
     getDefaultDataType as getDefaultType,
+    applyNullValues,
+    batchRows,
     describeRaggedRows,
+    dropTableStatement,
     findRaggedRows,
     inferSqlDataType,
     joinAsDelimitedLine,
@@ -473,17 +476,31 @@ function generateSQL() {
                           : lines.map(function(l) { return [l.trim()]; });
     }
 
+    /* NULL tokens become empty cells first, so inference ignores them and
+       they are written as NULL like any other empty value. */
+    var nullValues = el('sqlNullValues').value.split(',')
+        .map(function(t) { return t.trim(); })
+        .filter(function(t) { return t !== ''; });
+    dataRows = applyNullValues(dataRows, nullValues);
+
+    /* Inferred once and shared by CREATE and INSERT: a boolean column's
+       values are written as keywords rather than strings. */
+    var types = headers.map(function(_, i) {
+        return infer && dataRows.length
+            ? inferSqlDataType(dataRows, i, dialect, sizeVar ? 'fromSample' : 'fixed')
+            : getDefaultType(dialect);
+    });
+
     var sql = '';
+
+    if (el('sqlDropTable').checked) {
+        sql += dropTableStatement(tbl) + '\n\n';
+    }
 
     if (genCre) {
         sql += 'CREATE TABLE ' + tbl + ' (\n';
         headers.forEach(function(h, i) {
-            // inferSqlDataType takes the whole table and a column index; it
-            // extracts and filters the column itself.
-            var type = infer
-                ? inferSqlDataType(dataRows, i, dialect, sizeVar ? 'fromSample' : 'fixed')
-                : getDefaultType(dialect);
-            sql += '    ' + quoteId(h, dialect, alwaysQ) + ' ' + type;
+            sql += '    ' + quoteId(h, dialect, alwaysQ) + ' ' + types[i];
             sql += i < headers.length - 1 ? ',\n' : '\n';
         });
         sql += ')';
@@ -496,14 +513,17 @@ function generateSQL() {
 
     if (genIns && dataRows.length) {
         var colList = headers.map(function(h) { return quoteId(h, dialect, alwaysQ); }).join(', ');
-        sql += '\nINSERT INTO ' + tbl + ' (' + colList + ') VALUES\n';
-        sql += dataRows.map(function(row) {
+        var valueRows = dataRows.map(function(row) {
             var vals = headers.map(function(_, ci) {
-                return fmtSqlVal(ci < row.length ? row[ci] : '', infer);
+                return fmtSqlVal(ci < row.length ? row[ci] : '', infer, types[ci]);
             });
             return '    (' + vals.join(', ') + ')';
-        }).join(',\n');
-        sql += ';\n';
+        });
+        /* SQL Server rejects a VALUES list of more than 1000 rows. */
+        var batchSize = parseInt(el('sqlBatchSize').value, 10);
+        batchRows(valueRows, batchSize > 0 ? batchSize : 1000).forEach(function(batch) {
+            sql += '\nINSERT INTO ' + tbl + ' (' + colList + ') VALUES\n' + batch.join(',\n') + ';\n';
+        });
     }
 
     var out = el('sqlOutput');

@@ -127,6 +127,9 @@ Paste tabular data (auto-detects tab, comma, pipe, or space-aligned columns), a 
 - **SQL dialect**: Spark SQL, MS SQL Server, MySQL, PostgreSQL
 - **Infer data types**: automatically detects INTEGER, DECIMAL, DATE, TIMESTAMP, VARCHAR
 - **Size VARCHAR to sample**: off by default (`VARCHAR(255)`); enable for widths derived from the pasted data
+- **Treat as NULL**: cells written as SQL `NULL` — `NULL` and `\N` by default; add `NA`, `None` or `nan` for R and pandas exports
+- **DROP TABLE IF EXISTS**: start the script with it, so it can be re-run
+- **Rows per INSERT**: 1000 by default, SQL Server's limit for one `VALUES` list
 
 Generates a `CREATE TABLE` statement and `INSERT` rows. Copy the script to your clipboard, or **Open in Editor** to send it to a new SQL tab.
 
@@ -157,6 +160,8 @@ With **Size VARCHAR to sample** enabled, `"name"` becomes `VARCHAR(10)` instead.
 
 Values that only *look* numeric are kept as text, so zero-padded identifiers like `007` survive the round trip instead of being written as `7`.
 
+Types are chosen to hold the data exactly: integers beyond `INT` range become `BIGINT`, decimals become `DECIMAL` with the data's scale rather than a binary `FLOAT`, and a column of only `true`/`false` becomes `BOOLEAN` (`BIT` on SQL Server).
+
 Rows with a different number of fields from the first row are flagged above the output, with their row numbers, rather than being padded or truncated silently.
 
 ### Tab 5 — Excel Formulas
@@ -177,7 +182,7 @@ Select a formula category, choose a formula, fill in the parameters, and copy th
 
 ## Settings
 
-These settings apply to the **Convert to CSV Format** command. The panel has its own per-tab options.
+These settings apply to the editor commands — **Convert to CSV Format**, and **Generate SQL Table** for the SQL ones. The panel has its own per-tab options.
 
 | Setting | Default | Description |
 |---|---|---|
@@ -187,6 +192,9 @@ These settings apply to the **Convert to CSV Format** command. The panel has its
 | `list-to-csv.escapeCharacter` | `"` | Quote character used around fields |
 | `list-to-csv.varcharSizing` | `fixed` | `fixed` for `VARCHAR(255)`, or `fromSample` to size columns to the widest sampled value (applies to SQL generation) |
 | `list-to-csv.quoteIdentifiers` | `auto` | `auto` quotes only names that need it; `always` quotes every table and column name (applies to SQL generation) |
+| `list-to-csv.nullValues` | `["NULL", "\N"]` | Cell values written as SQL `NULL`, matched exactly (applies to SQL generation) |
+| `list-to-csv.insertBatchSize` | `1000` | Maximum rows per `INSERT` statement (applies to SQL generation) |
+| `list-to-csv.dropTableIfExists` | `false` | Start generated SQL with `DROP TABLE IF EXISTS` (applies to SQL generation) |
 
 Open settings via `Ctrl+Shift+P` → **Data Toolkit: Open Extension Settings**.
 

@@ -144,11 +144,12 @@ All behind the `Transform…` quick-pick, operating in place on a selection.
   Databricks, Oracle. Type systems differ meaningfully, so each is real work
   rather than an alias.
 - **`MERGE`/`UPSERT`**, and **`UPDATE`/`DELETE`** generation.
-- **Batched inserts** — configurable rows per statement; SQL Server caps the
-  table value constructor at 1000 rows.
+- ~~Batched inserts~~ — **done in 1.2.0**: 1000 rows per statement by default,
+  configurable.
 - **Bulk-load commands** — `COPY` for PostgreSQL/Redshift, `COPY INTO` for
   Snowflake/Databricks.
-- **Richer type inference** — nullability, boolean, UUID.
+- **Richer type inference** — nullability and UUID. Boolean, `BIGINT` and exact
+  `DECIMAL(38,s)` are **done in 1.2.0**.
 - **Save to file** — `.sql`, `.csv`, `.json`, complementing Open in Editor.
 
 ### SQL productivity
@@ -220,9 +221,11 @@ corrupting them.
   5,000 ids — precisely the case the feature exists for — produces SQL that
   fails. **Chunking done in 1.2.0** (`col IN (...) OR col IN (...)`); emitting a
   `VALUES` CTE or temp table instead remains open.
-- **SQL Server caps `INSERT ... VALUES` at 1000 rows.** The table value
-  constructor the code uses has a hard limit, so large pastes generate a script
-  the engine rejects. Batch into multiple statements.
+- ~~SQL Server caps `INSERT ... VALUES` at 1000 rows~~ — **done in 1.2.0**.
+  Inserts are batched, 1000 rows per statement by default.
+- ~~Integers past `INT` overflow~~ — **done in 1.2.0**. A 19-digit id was typed
+  `INT`; now `BIGINT`, or `DECIMAL(38,0)` beyond that. JSON input keeps such ids
+  exact rather than rounding them through `JSON.parse`.
 - **No streaming or chunked processing.** Everything runs in one synchronous
   pass; a very large paste will freeze the panel.
 
@@ -234,11 +237,14 @@ corrupting them.
 - **Non-ISO dates** — `15/03/2024`, `15-Mar-2024`. `DD/MM/YYYY` and `MM/DD/YYYY`
   cannot be told apart from the value alone, so this needs an explicit
   day-first/month-first setting rather than a guess.
-- **NULL sentinels.** Only a truly empty field becomes `NULL`; the tokens real
-  exports use — `NULL`, `\N` (MySQL), `NA`, `None`, `nan` (pandas) — become
-  string literals. Needs a configurable list, plus a way to distinguish empty
-  string from NULL.
-- **Booleans.** `true`/`false`, `Y`/`N`, `0`/`1` are never inferred as boolean.
+- ~~NULL sentinels~~ — **done in 1.2.0** as a configurable list, `NULL` and
+  `\N` by default. Still open: a way to keep an empty string distinct from NULL.
+- ~~Booleans~~ — **done in 1.2.0** for `true`/`false`. `Y`/`N` and `0`/`1` are
+  deliberately not inferred: they are as often codes and counts.
+- ~~Semicolon-delimited files~~ — **done in 1.2.0**. Excel writes them where the
+  decimal separator is a comma.
+- ~~Binary floats for decimals~~ — **done in 1.2.0**. `FLOAT`/`DOUBLE` became
+  `DECIMAL(38,s)` with the sample's scale.
 
 ### Tier 4 — workflow
 
@@ -251,8 +257,9 @@ corrupting them.
 - **No column profiling.** Null count and percentage, distinct count, min/max,
   length distribution, and inferred type per column — the first thing anyone
   does with an unfamiliar extract. The counting primitives already exist.
-- **No idempotent DDL** — `DROP TABLE IF EXISTS`, `CREATE TABLE IF NOT EXISTS`,
-  and an optional transaction wrapper.
+- **Idempotent DDL** — optional `DROP TABLE IF EXISTS` **done in 1.2.0**.
+  `CREATE TABLE IF NOT EXISTS` (not available on SQL Server) and a transaction
+  wrapper remain open.
 - **No `UPDATE` or `MERGE` generation** from a two-column id/value list.
 - **No primary key or constraint inference** — a column of unique non-null
   values is a candidate key and could be offered as one.

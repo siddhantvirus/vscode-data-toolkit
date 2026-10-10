@@ -2,6 +2,8 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 
 import {
+	applyNullValues,
+	batchRows,
 	describeRaggedRows,
 	detectSeparator,
 	findRaggedRows,
@@ -739,6 +741,87 @@ suite('transformUtils — buildChunkedInClause', () => {
 	test('rejects a bad chunk size or missing column', () => {
 		assert.throws(() => buildChunkedInClause(['a'], { column: 'id', chunkSize: 0 }));
 		assert.throws(() => buildChunkedInClause(['a'], { column: ' ', chunkSize: 10 }));
+	});
+});
+
+suite('sqlUtils — types for real data', () => {
+	const rows = (...values: string[]) => values.map(v => [v]);
+
+	test('ids past INT range are BIGINT, and past BIGINT an exact DECIMAL', () => {
+		assert.strictEqual(inferSqlDataType(rows('1', '2147483647'), 0, 'mssql'), 'INT');
+		assert.strictEqual(inferSqlDataType(rows('1', '2147483648'), 0, 'mssql'), 'BIGINT');
+		assert.strictEqual(inferSqlDataType(rows('1234567890123456789'), 0, 'postgres'), 'BIGINT');
+		assert.strictEqual(inferSqlDataType(rows('-9223372036854775808'), 0, 'spark'), 'BIGINT');
+		assert.strictEqual(inferSqlDataType(rows('9223372036854775808'), 0, 'spark'), 'DECIMAL(38,0)');
+	});
+
+	test('decimals are exact, with the sample’s scale', () => {
+		assert.strictEqual(inferSqlDataType(rows('1.5', '20.25'), 0, 'mssql'), 'DECIMAL(38,2)');
+		assert.strictEqual(inferSqlDataType(rows('1', '0.125'), 0, 'mysql'), 'DECIMAL(38,3)');
+		assert.strictEqual(inferSqlDataType(rows('3.14'), 0, 'spark'), 'DECIMAL(38,2)');
+	});
+
+	test('true/false columns are boolean; 0/1 stay numeric', () => {
+		assert.strictEqual(inferSqlDataType(rows('true', 'FALSE', ''), 0, 'postgres'), 'BOOLEAN');
+		assert.strictEqual(inferSqlDataType(rows('true', 'false'), 0, 'mssql'), 'BIT');
+		assert.strictEqual(inferSqlDataType(rows('0', '1'), 0, 'postgres'), 'INTEGER');
+		assert.strictEqual(inferSqlDataType(rows('true', 'maybe'), 0, 'postgres'), 'VARCHAR(255)');
+	});
+
+	test('boolean values are written as keywords', () => {
+		assert.strictEqual(formatSqlValue('True', true, 'BOOLEAN'), 'TRUE');
+		assert.strictEqual(formatSqlValue('false', true, 'BIT'), '0');
+		assert.strictEqual(formatSqlValue('true', true, 'VARCHAR(255)'), "'true'");
+		assert.strictEqual(formatSqlValue('true', false, 'BOOLEAN'), "'true'");
+	});
+
+	test('NULL tokens become empty cells', () => {
+		assert.deepStrictEqual(
+			applyNullValues([['NULL', ' \\N ', 'Null', 'x']], ['NULL', '\\N']),
+			[['', '', 'Null', 'x']]
+		);
+		assert.deepStrictEqual(applyNullValues([['NULL']], []), [['NULL']]);
+	});
+
+	test('rows are split into batches', () => {
+		assert.deepStrictEqual(batchRows([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+		assert.deepStrictEqual(batchRows([1, 2], 1000), [[1, 2]]);
+		assert.deepStrictEqual(batchRows([1, 2], 0), [[1, 2]]);
+	});
+
+	test('semicolon-delimited exports are detected', () => {
+		assert.strictEqual(detectSeparator('id;amount;city'), ';');
+		assert.strictEqual(detectSeparator('id;amount, net;city'), ';');
+		assert.strictEqual(detectSeparator('a,b;c'), ',');
+	});
+});
+
+suite('extension — SQL for real data', () => {
+	const settings = { varcharSizing: 'fixed' as const, quoting: 'auto' as const };
+	const opts = { tableName: 'flags', dialect: 'mysql' as const, inferDataTypes: true };
+
+	test('NULL tokens, booleans and long ids together', () => {
+		const sql = createSqlTableStatement(
+			['id', 'active', 'note'],
+			[['1234567890123456789', 'true', 'NULL'], ['2', 'false', 'hi']],
+			opts,
+			settings
+		);
+		assert.ok(sql.includes('id BIGINT,'), sql);
+		assert.ok(sql.includes('active BOOLEAN,'), sql);
+		assert.ok(sql.includes('(1234567890123456789, TRUE, NULL)'), sql);
+		assert.ok(sql.includes("(2, FALSE, 'hi')"), sql);
+	});
+
+	test('inserts are batched and DROP TABLE is optional', () => {
+		const rows = Array.from({ length: 2500 }, (_, i) => [String(i)]);
+		const sql = createSqlTableStatement(['n'], rows, opts, { ...settings, dropTableIfExists: true });
+		assert.ok(sql.startsWith('DROP TABLE IF EXISTS flags;\n\nCREATE TABLE flags ('), sql.slice(0, 80));
+		assert.strictEqual((sql.match(/INSERT INTO/g) || []).length, 3);
+
+		const plain = createSqlTableStatement(['n'], rows.slice(0, 3), opts, settings);
+		assert.ok(!plain.includes('DROP TABLE'));
+		assert.strictEqual((plain.match(/INSERT INTO/g) || []).length, 1);
 	});
 });
 
