@@ -71,14 +71,22 @@ format for this audience and is absent entirely.
 
 ### Formats
 
-- **Tabular/CSV → JSON** array of objects, header row as keys.
-- **JSON → CSV/tabular**, header being the union of keys across all objects.
-- **NDJSON** as an explicit input and output format. Newline-delimited JSON
-  parses differently from a JSON array — a separate format, not a toggle.
-- **JSON → SQL `INSERT`**, reusing the existing type inference.
-- **Extract a field by JSON path** into a list (`$.items[*].id`), feeding
-  straight into the existing `IN (...)` tool.
-- **Markdown table** as an output target, for PR descriptions and issues.
+All **done in 1.2.0**. JSON goes through one entry point
+(`parseStructuredTable`), so every table-shaped feature accepts it — the SQL
+Builder, the generate command, Compare → Rows and the transforms.
+
+- ~~Tabular/CSV → JSON~~ — array of objects, header row as keys, with optional
+  type inference that keeps `007` a string.
+- ~~JSON → CSV/tabular~~ — union of keys across all objects; nested objects
+  flattened to dotted columns, arrays kept as JSON cells.
+- ~~NDJSON~~ as both input and output.
+- ~~JSON → SQL `INSERT`~~ — by accepting JSON in the existing SQL paths rather
+  than a separate command.
+- ~~Extract a field by JSON path~~ — `$.items[*].id`, or just `id`.
+- ~~Markdown table~~ as output, and as input.
+
+A custom parser is used instead of `JSON.parse`, which rounds integers past
+2^53 — an 18-digit id would silently change in the generated SQL.
 
 ### Reverse conversions
 

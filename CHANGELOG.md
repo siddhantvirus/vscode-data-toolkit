@@ -22,6 +22,13 @@ This section is the view for anyone upgrading from **1.0.0**, which is what the 
   - **Build a chunked IN clause** for lists beyond Oracle's 1000-item limit (`ORA-01795`), OR-ing chunks of a configurable size.
 
   New transforms will be added to this list instead of as separate commands, keeping the palette and context menu short.
+- **JSON and Markdown tables.** JSON is read everywhere tabular data is: the SQL Builder, the generate command, the Compare tab's Rows mode, and the table transforms. A JSON array, a single object, NDJSON, and API responses shaped `{"data": [...]}` are all accepted; nested objects become dotted columns (`address.city`). New transforms:
+  - **Convert to CSV or TSV** from JSON, NDJSON or a Markdown table.
+  - **Convert a table to JSON**, as a JSON array or NDJSON, with numbers, booleans and nulls typed — and `007` kept a string.
+  - **Convert to a Markdown table**, for pull requests and issues, with numeric columns right-aligned.
+  - **Extract a JSON field into a list** by path (`$.data[*].id`, or just `id`), ready for an `IN (...)` clause.
+
+  Long numeric ids are kept exactly. `JSON.parse` rounds anything past 2^53, so `1234567890123456789` would have become `1234567890123456800` in the generated SQL; the extension reads numbers as written instead.
 - **Rows that do not match the header are reported.** SQL generation squared every row off against the header, padding short rows and silently dropping the extra fields of long ones — usually a value containing the delimiter without quotes. The generate command now stops with a warning naming the rows and asks before continuing; the SQL Builder tab shows the same warning above its output.
 
 ### Fixed — data correctness

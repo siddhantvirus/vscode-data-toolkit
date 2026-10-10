@@ -23,10 +23,28 @@ import {
 	buildChunkedInClause,
 	extractColumn,
 	formatDelimitedRow,
+	isMarkdownTable,
+	parseMarkdownTable,
+	parseStructuredTable,
 	splitIntoValues,
+	tableToMarkdown,
 	transposeTable,
 	unwrapInClause
 } from '../utils/transformUtils';
+import {
+	extractJsonPath,
+	JsonNumber,
+	JsonValue,
+	looksLikeJson,
+	parseJson,
+	parseJsonDocument,
+	parseJsonRecords,
+	recordsToTable,
+	stringifyJson,
+	tableToJson,
+	tableToRecords,
+	uniqueKeys
+} from '../utils/jsonUtils';
 import {
 	convertToCommaLine,
 	createSqlTableStatement,
@@ -721,6 +739,207 @@ suite('transformUtils — buildChunkedInClause', () => {
 	test('rejects a bad chunk size or missing column', () => {
 		assert.throws(() => buildChunkedInClause(['a'], { column: 'id', chunkSize: 0 }));
 		assert.throws(() => buildChunkedInClause(['a'], { column: ' ', chunkSize: 10 }));
+	});
+});
+
+suite('jsonUtils — parseJson', () => {
+	test('long integers keep every digit', () => {
+		// JSON.parse would give 1234567890123456800.
+		const value = parseJson('{"id": 1234567890123456789}');
+		assert.strictEqual(stringifyJson(value), '{"id":1234567890123456789}');
+	});
+
+	test('numbers keep their written form', () => {
+		assert.strictEqual(stringifyJson(parseJson('[1.50, -0, 1e5]')), '[1.50,-0,1e5]');
+	});
+
+	test('strings, escapes and literals', () => {
+		const value = parseJson('{"a":"x\\"y\\n\\u00e9","b":true,"c":null,"d":false}');
+		assert.deepStrictEqual(value, { a: 'x"y\né', b: true, c: null, d: false });
+	});
+
+	test('a trailing comma is accepted', () => {
+		assert.deepStrictEqual(parseJson('[ "a", "b", ]'), ['a', 'b']);
+		assert.deepStrictEqual(parseJson('{"a": "b",}'), { a: 'b' });
+	});
+
+	test('errors give the line and column', () => {
+		assert.throws(() => parseJson('{\n  "a": 1\n  "b": 2\n}'), /line 3, column 3: expected , or \}/);
+		assert.throws(() => parseJson('[1, 2'), /unexpected end of input/);
+		assert.throws(() => parseJson("{'a': 1}"), /property name in double quotes/);
+		assert.throws(() => parseJson('[1] x'), /unexpected text after/);
+	});
+
+	test('__proto__ is kept as an ordinary key', () => {
+		const value = parseJson('{"__proto__": {"x": 1}, "a": 2}');
+		assert.strictEqual(Object.getPrototypeOf(value), Object.prototype);
+		assert.deepStrictEqual(Object.keys(value as object), ['__proto__', 'a']);
+	});
+
+	test('pretty printing indents nested values', () => {
+		assert.strictEqual(
+			stringifyJson(parseJson('{"a":[1,{"b":null}],"c":{}}'), '  '),
+			'{\n  "a": [\n    1,\n    {\n      "b": null\n    }\n  ],\n  "c": {}\n}'
+		);
+	});
+});
+
+suite('jsonUtils — reading records', () => {
+	test('looksLikeJson tells JSON from bracketed SQL Server headers', () => {
+		assert.strictEqual(looksLikeJson('[{"a":1}]'), true);
+		assert.strictEqual(looksLikeJson('  {"a":1}'), true);
+		assert.strictEqual(looksLikeJson('[1, 2]'), true);
+		assert.strictEqual(looksLikeJson('[]'), true);
+		assert.strictEqual(looksLikeJson('[id]\t[name]'), false);
+		assert.strictEqual(looksLikeJson('[null_count],[x]'), false);
+		assert.strictEqual(looksLikeJson('id,name'), false);
+	});
+
+	test('NDJSON is read one value per line', () => {
+		assert.deepStrictEqual(parseJsonDocument('{"a":1}\n\n{"a":2}\n'), [{ a: new JsonNumber('1') }, { a: new JsonNumber('2') }]);
+	});
+
+	test('NDJSON errors name the right line', () => {
+		assert.throws(() => parseJsonDocument('{"a":1}\n{"a":2}\n{"a":}'), /line 3/);
+	});
+
+	test('an API response is unwrapped to its array of records', () => {
+		const { records, path } = parseJsonRecords('{"data": [{"id": 1}, {"id": 2}], "meta": {"page": 1}}');
+		assert.strictEqual(records.length, 2);
+		assert.strictEqual(path, '$.data');
+	});
+
+	test('an object with no single array of records is one record', () => {
+		const { records, path } = parseJsonRecords('{"a": [1, 2], "b": [3]}');
+		assert.strictEqual(records.length, 1);
+		assert.strictEqual(path, '$');
+	});
+
+	test('recordsToTable unions keys and flattens nested objects', () => {
+		assert.deepStrictEqual(
+			recordsToTable(parseJson('[{"id":1,"addr":{"city":"Pune"}},{"id":2,"tags":["a","b"],"note":null}]') as JsonValue[]),
+			[
+				['id', 'addr.city', 'tags', 'note'],
+				['1', 'Pune', '', ''],
+				['2', '', '["a","b"]', '']
+			]
+		);
+	});
+
+	test('scalar records go in a value column', () => {
+		assert.deepStrictEqual(recordsToTable(parseJson('["a", 2, true]') as JsonValue[]), [['value'], ['a'], ['2'], ['true']]);
+	});
+
+	test('an empty array is an error, not an empty table', () => {
+		assert.throws(() => recordsToTable([]), /empty/);
+	});
+});
+
+suite('jsonUtils — writing records', () => {
+	const table = [['id', 'code', 'active', 'note'], ['1', '007', 'TRUE', ''], ['12345678901234567890', 'x', 'false', 'hi']];
+
+	test('types are inferred, but zero-padded ids stay strings', () => {
+		assert.strictEqual(
+			tableToJson(table, 'ndjson', true),
+			'{"id":1,"code":"007","active":true,"note":null}\n' +
+			'{"id":12345678901234567890,"code":"x","active":false,"note":"hi"}'
+		);
+	});
+
+	test('without inference everything is a string', () => {
+		assert.strictEqual(
+			tableToJson([['a', 'b'], ['1', '']], 'ndjson', false),
+			'{"a":"1","b":""}'
+		);
+	});
+
+	test('a JSON array is pretty-printed', () => {
+		assert.strictEqual(tableToJson([['a'], ['1']], 'array', true), '[\n  {\n    "a": 1\n  }\n]');
+	});
+
+	test('duplicate and blank headers become distinct keys', () => {
+		assert.deepStrictEqual(uniqueKeys(['id', 'id', '', 'id_2']), ['id', 'id_2', 'column_3', 'id_2_2']);
+		assert.deepStrictEqual(Object.keys(tableToRecords([['x', 'x'], ['1', '2']], false)[0]), ['x', 'x_2']);
+	});
+
+	test('JSON round-trips through a table', () => {
+		const json = '[{"id":1,"name":"O\'Brien, Pat"},{"id":2,"name":"Lee"}]';
+		const back = tableToJson(recordsToTable(parseJsonRecords(json).records), 'array', true);
+		assert.strictEqual(stringifyJson(parseJson(back)), json);
+	});
+});
+
+suite('jsonUtils — extractJsonPath', () => {
+	const doc = parseJson('{"data":[{"id":1,"tags":["a","b"],"owner":{"name":"Ann"}},{"id":2,"tags":[],"owner":null},{"tags":["c"]}]}');
+
+	test('a JSONPath with wildcards', () => {
+		assert.deepStrictEqual(extractJsonPath(doc, '$.data[*].id'), { values: ['1', '2'], missing: 1 });
+	});
+
+	test('a name applies to every element of an array', () => {
+		assert.deepStrictEqual(extractJsonPath(doc, 'data.id').values, ['1', '2']);
+	});
+
+	test('a path ending on arrays lists their elements', () => {
+		assert.deepStrictEqual(extractJsonPath(doc, 'data.tags').values, ['a', 'b', 'c']);
+	});
+
+	test('indexes, bracketed names and nulls', () => {
+		assert.deepStrictEqual(extractJsonPath(doc, "$['data'][0].owner.name").values, ['Ann']);
+		assert.deepStrictEqual(extractJsonPath(doc, 'data.owner.name'), { values: ['Ann'], missing: 2 });
+	});
+
+	test('objects come out as compact JSON', () => {
+		assert.deepStrictEqual(extractJsonPath(doc, 'data[0].owner').values, ['{"name":"Ann"}']);
+	});
+
+	test('an invalid path is reported', () => {
+		assert.throws(() => extractJsonPath(doc, 'data[x]'), /Invalid path/);
+	});
+});
+
+suite('transformUtils — Markdown and structured input', () => {
+	test('tableToMarkdown pads, escapes and right-aligns numbers', () => {
+		assert.strictEqual(
+			tableToMarkdown([['id', 'name'], ['1', 'a|b'], ['10', 'two\nlines']]),
+			'|  id | name         |\n' +
+			'| --: | ------------ |\n' +
+			'|   1 | a\\|b         |\n' +
+			'|  10 | two<br>lines |'
+		);
+	});
+
+	test('a Markdown table round-trips', () => {
+		const table = [['id', 'name'], ['1', 'a|b'], ['2', 'two\nlines']];
+		assert.deepStrictEqual(parseMarkdownTable(tableToMarkdown(table)), table);
+	});
+
+	test('isMarkdownTable needs the delimiter row', () => {
+		assert.strictEqual(isMarkdownTable('| a | b |\n|---|:-:|\n| 1 | 2 |'), true);
+		assert.strictEqual(isMarkdownTable('a | b\n--- | ---\n1 | 2'), true);
+		assert.strictEqual(isMarkdownTable('a|b\n1|2'), false);
+	});
+
+	test('parseStructuredTable reads JSON and says where from', () => {
+		const result = parseStructuredTable('{"rows":[{"a":1}]}');
+		assert.deepStrictEqual(result?.table, [['a'], ['1']]);
+		assert.strictEqual(result?.note, 'Read 1 JSON record from $.rows.');
+	});
+
+	test('parseStructuredTable leaves delimited text alone', () => {
+		assert.strictEqual(parseStructuredTable('a,b\n1,2'), null);
+	});
+
+	test('the SQL generator accepts JSON, ignoring the header flag', () => {
+		const { headers, dataLines } = parseSqlTabularData('[{"id": 1, "full name": "Ann"}]', false);
+		assert.deepStrictEqual(headers, ['id', 'full_name']);
+		assert.deepStrictEqual(dataLines, [['1', 'Ann']]);
+	});
+
+	test('the SQL generator accepts a Markdown table', () => {
+		const { headers, dataLines } = parseSqlTabularData('| id | name |\n|----|------|\n| 1 | Ann |');
+		assert.deepStrictEqual(headers, ['id', 'name']);
+		assert.deepStrictEqual(dataLines, [['1', 'Ann']]);
 	});
 });
 

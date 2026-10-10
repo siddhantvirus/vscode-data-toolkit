@@ -17,6 +17,7 @@ A VS Code extension built for data engineers. Convert lists, build SQL scripts, 
 |---|---|
 | Convert list to CSV / SQL IN clause | Right-click selection → Data Toolkit |
 | Unwrap an IN clause, extract a column, transpose, chunk long IN lists | Right-click selection → Data Toolkit → Transform Selection… |
+| JSON ↔ CSV/TSV, table → Markdown, extract a JSON field | Right-click selection → Data Toolkit → Transform Selection… |
 | Count value occurrences (GROUP BY) | Right-click selection → Data Toolkit |
 | Remove duplicate lines | Right-click selection → Data Toolkit |
 | Compare two columns (set operations) | Right-click selection → Data Toolkit |
@@ -40,8 +41,14 @@ One entry that opens a searchable list of transforms and applies the one you pic
 | **Transpose rows and columns** | Rows become columns. Short rows are padded, so no value is lost. |
 | **Split a delimited row into lines** | `a,"b,c",d` → `a` / `b,c` / `d`. Quote-aware. |
 | **Build a chunked IN clause** | For lists longer than Oracle's 1000-item limit: one value per line in, `(id IN (...) OR id IN (...))` out. Chunk size is configurable, and values are left unquoted only when every one is a plain number. |
+| **Convert to CSV or TSV** | JSON, NDJSON or a Markdown table in; CSV or TSV out. Nested objects become dotted columns (`address.city`); arrays stay as JSON in one cell. |
+| **Convert a table to JSON** | Header row becomes the keys. JSON array or NDJSON, with numbers, `true`/`false` and empty values typed — or everything kept as text. `007` stays a string. |
+| **Convert to a Markdown table** | Tabular data or JSON in; an aligned Markdown table out, ready for a pull request or issue. |
+| **Extract a JSON field into a list** | `$.data[*].id` → one id per line. A plain `id` works too: a name applied to an array applies to every element. |
 
 New transforms are added to this list rather than as separate commands, so the palette and menu stay short.
+
+**JSON input** is accepted wherever tabular data is — these transforms, Generate SQL Table, the SQL Builder, and Compare → Rows. A JSON array, a single object, NDJSON (one record per line), or an API response shaped `{"data": [...]}` all work. Long numeric ids are kept exactly; ordinary JSON parsing would round `1234567890123456789` to `1234567890123456800`. Markdown tables are accepted the same way.
 
 ### Convert to CSV Format
 Converts a multi-line selection into a properly formatted CSV row. Strips bullet points, numbers, and other list prefixes. Respects the delimiter setting.
@@ -101,7 +108,7 @@ Paste two lists (one per column) and choose a set operation:
 
 All three result sets are shown side by side with counts, and each has its own copy button. **Case-sensitive** and **Trim whitespace** options control how values are matched.
 
-**Rows (tabular) mode** compares two tables instead of two lists. Paste tabular data with a header row into each side; rows are matched on a key column (auto-selected, overridable) and classified as added, removed, changed or unchanged, with the differing fields highlighted inline as `before → after`.
+**Rows (tabular) mode** compares two tables instead of two lists. Paste tabular data with a header row, a Markdown table, or JSON into each side — the two sides need not be the same format, so a JSON export can be checked against a CSV; rows are matched on a key column (auto-selected, overridable) and classified as added, removed, changed or unchanged, with the differing fields highlighted inline as `before → after`.
 
 | | Meaning |
 |---|---|
@@ -114,7 +121,7 @@ Columns are matched by header name, so reordering them is not treated as a chang
 
 ### Tab 4 — SQL Builder
 
-Paste tabular data (auto-detects tab, comma, pipe, or semicolon delimiters) and configure:
+Paste tabular data (auto-detects tab, comma, pipe, or space-aligned columns), a Markdown table, or JSON, and configure:
 
 - **Table name**
 - **SQL dialect**: Spark SQL, MS SQL Server, MySQL, PostgreSQL

@@ -490,7 +490,7 @@ td.cell-changed { background: rgba(229,192,123,.16); }
 <!-- ═══ TAB 4: SQL BUILDER ══════════════════════════════════ -->
 <div id="tab-sql" class="tab-content">
     <div class="field">
-        <label for="sqlInput">Paste tabular data (CSV, TSV, pipe-delimited, or space-aligned):</label>
+        <label for="sqlInput">Paste tabular data (CSV, TSV, pipe-delimited, space-aligned, a Markdown table, or JSON):</label>
         <textarea id="sqlInput" rows="8" placeholder="Paste your data here. First row can be column headers."></textarea>
     </div>
     <div class="sql-config">

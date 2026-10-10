@@ -21,6 +21,7 @@ import {
 } from "../utils/sqlUtils";
 import { diffRows, suggestKeyColumn } from "../utils/diffUtils";
 import { escapeHtml as escHtml } from "../utils/htmlUtils";
+import { parseStructuredTable } from "../utils/transformUtils";
 
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
 
@@ -211,7 +212,7 @@ function setCompareMode(mode) {
     el('cmpRowOptions').classList.toggle('hidden', !rowsMode);
     el('labelColA').textContent = rowsMode ? 'Table A (with header row):' : 'Column A:';
     el('labelColB').textContent = rowsMode ? 'Table B (with header row):' : 'Column B:';
-    var ph = rowsMode ? 'Paste tabular data, first row is the header...' : 'Paste values (one per line)...';
+    var ph = rowsMode ? 'Paste tabular data with a header row, a Markdown table, or JSON...' : 'Paste values (one per line)...';
     el('compareColA').placeholder = ph;
     el('compareColB').placeholder = ph;
 
@@ -225,9 +226,12 @@ function setCompareMode(mode) {
     if (rowsMode) { refreshKeyOptions(); }
 }
 
+/* Throws on malformed JSON, so the caller can say what is wrong with it. */
 function readTable(id) {
     var raw = el(id).value;
     if (!raw.trim()) { return null; }
+    var structured = parseStructuredTable(raw);
+    if (structured) { return structured.table; }
     var firstLine = raw.split(/\r?\n/)[0];
     var sep = detectSep(firstLine);
     if (!sep) { return null; }
@@ -239,8 +243,14 @@ function readTable(id) {
    that is unique on both sides so the common case needs no interaction. */
 function refreshKeyOptions() {
     var select = el('cmpKey');
-    var a = readTable('compareColA');
-    var b = readTable('compareColB');
+    var a, b;
+    /* Runs as the user types, when half-pasted JSON is normal — not an error. */
+    try {
+        a = readTable('compareColA');
+        b = readTable('compareColB');
+    } catch (e) {
+        a = b = null;
+    }
     if (!a || !b) {
         select.innerHTML = '<option value="">Load data to pick a key…</option>';
         return;
@@ -315,10 +325,16 @@ function renderDiff(result, keyColumn, showUnchanged) {
 }
 
 function doCompareRows() {
-    var a = readTable('compareColA');
-    var b = readTable('compareColB');
+    var a, b;
+    try {
+        a = readTable('compareColA');
+        b = readTable('compareColB');
+    } catch (e) {
+        showStatus('compareStatus', e.message, false);
+        return;
+    }
     if (!a || !b) {
-        showStatus('compareStatus', 'Paste tabular data with a header row into both sides.', false);
+        showStatus('compareStatus', 'Paste tabular data with a header row, a Markdown table, or JSON into both sides.', false);
         return;
     }
     refreshKeyOptions();
@@ -415,13 +431,24 @@ function generateSQL() {
     var tblRaw   = el('sqlTable').value.trim() || 'my_table';
     var tbl      = quoteId(tblRaw, dialect, alwaysQ);
 
-    var sep = detectSep(lines[0]);
+    /* JSON and Markdown tables carry their own header row, so the header
+       checkbox does not apply to them. */
+    var structured;
+    try {
+        structured = parseStructuredTable(raw);
+    } catch (e) {
+        showStatus('sqlStatus', e.message, false);
+        return;
+    }
+    if (structured) { hasHdr = true; }
+
+    var sep = structured ? null : detectSep(lines[0]);
     var headers, dataRows;
 
-    if (sep) {
+    if (structured || sep) {
         /* Parse the whole document rather than line by line, so quoting is
            honoured across newlines. */
-        var rows = parseDelimitedText(raw, sep);
+        var rows = structured ? structured.table : parseDelimitedText(raw, sep);
         if (!rows.length) { showStatus('sqlStatus', 'No data found.', false); return; }
 
         /* Rows narrower or wider than the first are padded or truncated below;
@@ -486,6 +513,7 @@ function generateSQL() {
     /* Say what happened where the user is looking. Generating does not copy —
        that is what the Copy SQL and Open in Editor buttons are for. */
     showStatus('sqlStatus',
+        (structured && structured.note ? structured.note + ' ' : '') +
         'Generated ' + (genCre ? 'CREATE TABLE' : '') +
         (genCre && genIns ? ' + ' : '') +
         (genIns ? dataRows.length + ' INSERT row' + (dataRows.length === 1 ? '' : 's') : '') +

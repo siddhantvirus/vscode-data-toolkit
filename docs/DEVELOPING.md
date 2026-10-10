@@ -15,7 +15,8 @@ list-to-csv/
 │   └── utils/
 │       ├── sqlUtils.ts               # Delimited parsing, identifiers, type inference, value formatting
 │       ├── htmlUtils.ts              # HTML escaping, CSP nonce, RegExp escaping
-│       ├── transformUtils.ts         # Pure transforms: unwrap IN, extract, transpose, chunk
+│       ├── transformUtils.ts         # Pure transforms, Markdown tables, JSON/Markdown input detection
+│       ├── jsonUtils.ts              # Lossless JSON parser, records ↔ table, JSON paths
 │       ├── editorUtils.ts            # Open generated SQL in a new editor tab
 │       └── diffUtils.ts              # Keyed row diff for the Compare tab
 ├── docs/
@@ -143,6 +144,8 @@ Two adapters remain in `main.ts`, because the panel's controls are checkboxes wh
 `parseDelimitedLine` implements RFC 4180 quoting for single-character delimiters — a field like `"Smith, John"` stays one column, and `""` inside a quoted field is an escaped quote. Space-aligned columns use a RegExp separator, which has no quoting convention, so those fall back to a plain split.
 
 `parseDelimitedText` parses a whole document rather than a line at a time, so quoting is honoured across newlines and a quoted field containing one survives intact. Both SQL pipelines use it. `parseDelimitedLine` remains for single-line callers and for the RegExp-separator fallback, where space-aligned columns have no quoting convention.
+
+**JSON and Markdown input** go through `parseStructuredTable` in `transformUtils.ts`, which returns rows (header first) or `null` for delimited text. Every table-shaped path calls it before falling back to `detectSeparator`, so a new feature gets JSON support by doing the same. JSON is parsed by `parseJson` in `jsonUtils.ts`, not `JSON.parse`: numbers are kept as `JsonNumber` holding their source text, because `JSON.parse` rounds integers beyond 2^53 and ids that long are common.
 
 `sanitizeColumnNames` guarantees identifiers that every dialect accepts: punctuation collapsed to single underscores, leading digits prefixed with `col_`, blanks named positionally, and duplicates suffixed case-insensitively.
 

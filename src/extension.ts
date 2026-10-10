@@ -20,6 +20,7 @@ import {
 import { escapeHtml, escapeRegExp, getNonce } from './utils/htmlUtils';
 import { openSqlInEditor } from './utils/editorUtils';
 import { registerTransformCommand } from './transformCommand';
+import { detectStructuredFormat, parseStructuredTable } from './utils/transformUtils';
 
 interface ConversionOptions {
     delimiter: string;
@@ -182,8 +183,9 @@ export function activate(context: vscode.ExtensionContext) {
                 
                 const selectedText = textEditor.document.getText(selection);
 
-                // Get SQL table options from user
-                const options = await getSqlTableOptions();
+                // Get SQL table options from user. JSON and Markdown tables
+                // always have a header, so there is nothing to ask about it.
+                const options = await getSqlTableOptions(detectStructuredFormat(selectedText) === null);
                 if (!options) {
                     return; // User cancelled the operation
                 }
@@ -688,7 +690,7 @@ export function formatCSVCell(cell: string, options: ConversionOptions): string 
 /**
  * Prompt the user for SQL table options
  */
-async function getSqlTableOptions(): Promise<SqlTableOptions | undefined> {
+async function getSqlTableOptions(askAboutHeaders = true): Promise<SqlTableOptions | undefined> {
     // Ask for table name
     const tableName = await vscode.window.showInputBox({
         prompt: 'Enter table name',
@@ -736,10 +738,12 @@ async function getSqlTableOptions(): Promise<SqlTableOptions | undefined> {
     }
     
     // Ask if the first row contains headers
-    const includeHeaders = await vscode.window.showQuickPick(
-        ['Yes', 'No'],
-        { placeHolder: 'Does your data include column headers in the first row?' }
-    );
+    const includeHeaders = askAboutHeaders
+        ? await vscode.window.showQuickPick(
+            ['Yes', 'No'],
+            { placeHolder: 'Does your data include column headers in the first row?' }
+        )
+        : 'Yes';
 
     if (!includeHeaders) {
         return undefined;
@@ -859,18 +863,22 @@ export function parseSqlTabularData(
         throw new Error('No valid data found');
     }
     
+    // JSON and Markdown tables carry their own header, so hasHeaders does not
+    // apply to them.
+    const structured = parseStructuredTable(text);
+
     // Try to detect if the data is tabular (tab, comma, pipe or space aligned)
-    const separator = detectSeparator(lines[0]);
+    const separator = structured ? null : detectSeparator(lines[0]);
 
     let headers: string[] = [];
     let dataLines: string[][] = [];
     let ragged: RaggedRow[] = [];
     let expectedFields = 1;
 
-    if (separator) {
+    if (structured || separator) {
         // Parse the whole document, not line by line: quoting is honoured
         // across newlines, so a quoted field containing one stays intact.
-        const rows = parseDelimitedText(text, separator);
+        const rows = structured ? structured.table : parseDelimitedText(text, separator as string | RegExp);
 
         if (rows.length === 0) {
             throw new Error('No valid data found');
@@ -880,7 +888,7 @@ export function parseSqlTabularData(
         // caller can say so instead of silently dropping data.
         ({ ragged, expected: expectedFields } = findRaggedRows(rows));
 
-        if (hasHeaders) {
+        if (hasHeaders || structured) {
             headers = rows[0];
             dataLines = rows.slice(1);
         } else {
