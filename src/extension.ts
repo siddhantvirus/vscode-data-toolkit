@@ -15,11 +15,16 @@ import {
     sanitizeColumnNames,
     quoteIdentifier,
     IdentifierQuoting,
-    VarcharSizing
+    VarcharSizing,
+    applyNullValues,
+    batchRows,
+    dropTableStatement,
+    DEFAULT_NULL_VALUES
 } from './utils/sqlUtils';
 import { escapeHtml, escapeRegExp, getNonce } from './utils/htmlUtils';
 import { openSqlInEditor } from './utils/editorUtils';
 import { registerTransformCommand } from './transformCommand';
+import { detectStructuredFormat, parseStructuredTable } from './utils/transformUtils';
 
 interface ConversionOptions {
     delimiter: string;
@@ -182,8 +187,9 @@ export function activate(context: vscode.ExtensionContext) {
                 
                 const selectedText = textEditor.document.getText(selection);
 
-                // Get SQL table options from user
-                const options = await getSqlTableOptions();
+                // Get SQL table options from user. JSON and Markdown tables
+                // always have a header, so there is nothing to ask about it.
+                const options = await getSqlTableOptions(detectStructuredFormat(selectedText) === null);
                 if (!options) {
                     return; // User cancelled the operation
                 }
@@ -688,7 +694,7 @@ export function formatCSVCell(cell: string, options: ConversionOptions): string 
 /**
  * Prompt the user for SQL table options
  */
-async function getSqlTableOptions(): Promise<SqlTableOptions | undefined> {
+async function getSqlTableOptions(askAboutHeaders = true): Promise<SqlTableOptions | undefined> {
     // Ask for table name
     const tableName = await vscode.window.showInputBox({
         prompt: 'Enter table name',
@@ -736,10 +742,12 @@ async function getSqlTableOptions(): Promise<SqlTableOptions | undefined> {
     }
     
     // Ask if the first row contains headers
-    const includeHeaders = await vscode.window.showQuickPick(
-        ['Yes', 'No'],
-        { placeHolder: 'Does your data include column headers in the first row?' }
-    );
+    const includeHeaders = askAboutHeaders
+        ? await vscode.window.showQuickPick(
+            ['Yes', 'No'],
+            { placeHolder: 'Does your data include column headers in the first row?' }
+        )
+        : 'Yes';
 
     if (!includeHeaders) {
         return undefined;
@@ -767,6 +775,12 @@ async function getSqlTableOptions(): Promise<SqlTableOptions | undefined> {
 export interface SqlGenerationSettings {
     varcharSizing: VarcharSizing;
     quoting: IdentifierQuoting;
+    /** Cell values written as NULL, such as `NULL` and `\N`. */
+    nullValues?: string[];
+    /** Rows per INSERT statement; SQL Server rejects more than 1000. */
+    insertBatchSize?: number;
+    /** Start the script with DROP TABLE IF EXISTS, so it can be re-run. */
+    dropTableIfExists?: boolean;
 }
 
 /**
@@ -780,7 +794,10 @@ export function readSqlGenerationSettings(): SqlGenerationSettings {
     const config = vscode.workspace.getConfiguration('list-to-csv');
     return {
         varcharSizing: config.get<VarcharSizing>('varcharSizing', 'fixed'),
-        quoting: config.get<IdentifierQuoting>('quoteIdentifiers', 'auto')
+        quoting: config.get<IdentifierQuoting>('quoteIdentifiers', 'auto'),
+        nullValues: config.get<string[]>('nullValues', DEFAULT_NULL_VALUES),
+        insertBatchSize: config.get<number>('insertBatchSize', 1000),
+        dropTableIfExists: config.get<boolean>('dropTableIfExists', false)
     };
 }
 
@@ -791,20 +808,36 @@ export function createSqlTableStatement(
     settings: SqlGenerationSettings
 ): string {
     const { tableName, dialect, inferDataTypes } = options;
-    const { varcharSizing, quoting } = settings;
+    const {
+        varcharSizing,
+        quoting,
+        nullValues = DEFAULT_NULL_VALUES,
+        insertBatchSize = 1000,
+        dropTableIfExists = false
+    } = settings;
 
     const quote = (name: string) => quoteIdentifier(name, dialect, quoting);
 
+    // NULL tokens become empty cells first, so inference ignores them and
+    // they are written as NULL like any other empty value.
+    const rowsToInsert = applyNullValues(sampleData, nullValues);
+
+    // Inferred once and shared by CREATE and INSERT: a boolean column's
+    // values are written differently from text.
+    const columnTypes = headers.map((_, i) =>
+        inferDataTypes && rowsToInsert.length > 0
+            ? inferSqlDataType(rowsToInsert, i, dialect, varcharSizing)
+            : getDefaultDataType(dialect)
+    );
+
+    let sql = dropTableIfExists ? dropTableStatement(quote(tableName)) + '\n\n' : '';
+
     // Start building the SQL statement
-    let sql = `CREATE TABLE ${quote(tableName)} (\n`;
+    sql += `CREATE TABLE ${quote(tableName)} (\n`;
 
     // Add columns
     for (let i = 0; i < headers.length; i++) {
-        const dataType = inferDataTypes && sampleData.length > 0
-            ? inferSqlDataType(sampleData, i, dialect, varcharSizing)
-            : getDefaultDataType(dialect);
-
-        sql += `    ${quote(headers[i])} ${dataType}`;
+        sql += `    ${quote(headers[i])} ${columnTypes[i]}`;
         sql += i < headers.length - 1 ? ',\n' : '\n';
     }
     
@@ -826,18 +859,18 @@ export function createSqlTableStatement(
     // multi-row VALUES form, so one code path covers all four — the previous
     // four near-identical branches differed only in identifier quoting, and
     // drifted (only postgres terminated its statement).
-    if (sampleData.length > 0) {
+    if (rowsToInsert.length > 0) {
         const columnList = headers.map(quote).join(', ');
-        const rows = sampleData.map(row =>
+        const rows = rowsToInsert.map(row =>
             '    (' + headers
-                .map((_, j) => formatSqlValue(j < row.length ? row[j] : '', inferDataTypes))
+                .map((_, j) => formatSqlValue(j < row.length ? row[j] : '', inferDataTypes, columnTypes[j]))
                 .join(', ') + ')'
         );
 
         sql += '\n\n-- Insert data into table\n';
-        sql += `INSERT INTO ${quote(tableName)} (${columnList}) VALUES\n`;
-        sql += rows.join(',\n');
-        sql += ';\n';
+        sql += batchRows(rows, insertBatchSize)
+            .map(batch => `INSERT INTO ${quote(tableName)} (${columnList}) VALUES\n${batch.join(',\n')};\n`)
+            .join('\n');
     }
 
     return sql;
@@ -859,18 +892,22 @@ export function parseSqlTabularData(
         throw new Error('No valid data found');
     }
     
+    // JSON and Markdown tables carry their own header, so hasHeaders does not
+    // apply to them.
+    const structured = parseStructuredTable(text);
+
     // Try to detect if the data is tabular (tab, comma, pipe or space aligned)
-    const separator = detectSeparator(lines[0]);
+    const separator = structured ? null : detectSeparator(lines[0]);
 
     let headers: string[] = [];
     let dataLines: string[][] = [];
     let ragged: RaggedRow[] = [];
     let expectedFields = 1;
 
-    if (separator) {
+    if (structured || separator) {
         // Parse the whole document, not line by line: quoting is honoured
         // across newlines, so a quoted field containing one stays intact.
-        const rows = parseDelimitedText(text, separator);
+        const rows = structured ? structured.table : parseDelimitedText(text, separator as string | RegExp);
 
         if (rows.length === 0) {
             throw new Error('No valid data found');
@@ -880,7 +917,7 @@ export function parseSqlTabularData(
         // caller can say so instead of silently dropping data.
         ({ ragged, expected: expectedFields } = findRaggedRows(rows));
 
-        if (hasHeaders) {
+        if (hasHeaders || structured) {
             headers = rows[0];
             dataLines = rows.slice(1);
         } else {

@@ -2,6 +2,8 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 
 import {
+	applyNullValues,
+	batchRows,
 	describeRaggedRows,
 	detectSeparator,
 	findRaggedRows,
@@ -23,10 +25,39 @@ import {
 	buildChunkedInClause,
 	extractColumn,
 	formatDelimitedRow,
+	isMarkdownTable,
+	parseMarkdownTable,
+	parseStructuredTable,
 	splitIntoValues,
+	tableToMarkdown,
 	transposeTable,
 	unwrapInClause
 } from '../utils/transformUtils';
+import {
+	applyTemplate,
+	changeCase,
+	dedupeByColumn,
+	extractMatches,
+	filterLines,
+	normaliseWhitespace,
+	parseUserRegExp,
+	sortLines,
+	toLines
+} from '../utils/listUtils';
+import {
+	extractJsonPath,
+	JsonNumber,
+	JsonValue,
+	looksLikeJson,
+	parseJson,
+	parseJsonDocument,
+	parseJsonRecords,
+	recordsToTable,
+	stringifyJson,
+	tableToJson,
+	tableToRecords,
+	uniqueKeys
+} from '../utils/jsonUtils';
 import {
 	convertToCommaLine,
 	createSqlTableStatement,
@@ -724,6 +755,365 @@ suite('transformUtils — buildChunkedInClause', () => {
 	});
 });
 
+suite('sqlUtils — types for real data', () => {
+	const rows = (...values: string[]) => values.map(v => [v]);
+
+	test('ids past INT range are BIGINT, and past BIGINT an exact DECIMAL', () => {
+		assert.strictEqual(inferSqlDataType(rows('1', '2147483647'), 0, 'mssql'), 'INT');
+		assert.strictEqual(inferSqlDataType(rows('1', '2147483648'), 0, 'mssql'), 'BIGINT');
+		assert.strictEqual(inferSqlDataType(rows('1234567890123456789'), 0, 'postgres'), 'BIGINT');
+		assert.strictEqual(inferSqlDataType(rows('-9223372036854775808'), 0, 'spark'), 'BIGINT');
+		assert.strictEqual(inferSqlDataType(rows('9223372036854775808'), 0, 'spark'), 'DECIMAL(38,0)');
+	});
+
+	test('decimals are exact, with the sample’s scale', () => {
+		assert.strictEqual(inferSqlDataType(rows('1.5', '20.25'), 0, 'mssql'), 'DECIMAL(38,2)');
+		assert.strictEqual(inferSqlDataType(rows('1', '0.125'), 0, 'mysql'), 'DECIMAL(38,3)');
+		assert.strictEqual(inferSqlDataType(rows('3.14'), 0, 'spark'), 'DECIMAL(38,2)');
+	});
+
+	test('true/false columns are boolean; 0/1 stay numeric', () => {
+		assert.strictEqual(inferSqlDataType(rows('true', 'FALSE', ''), 0, 'postgres'), 'BOOLEAN');
+		assert.strictEqual(inferSqlDataType(rows('true', 'false'), 0, 'mssql'), 'BIT');
+		assert.strictEqual(inferSqlDataType(rows('0', '1'), 0, 'postgres'), 'INTEGER');
+		assert.strictEqual(inferSqlDataType(rows('true', 'maybe'), 0, 'postgres'), 'VARCHAR(255)');
+	});
+
+	test('boolean values are written as keywords', () => {
+		assert.strictEqual(formatSqlValue('True', true, 'BOOLEAN'), 'TRUE');
+		assert.strictEqual(formatSqlValue('false', true, 'BIT'), '0');
+		assert.strictEqual(formatSqlValue('true', true, 'VARCHAR(255)'), "'true'");
+		assert.strictEqual(formatSqlValue('true', false, 'BOOLEAN'), "'true'");
+	});
+
+	test('NULL tokens become empty cells', () => {
+		assert.deepStrictEqual(
+			applyNullValues([['NULL', ' \\N ', 'Null', 'x']], ['NULL', '\\N']),
+			[['', '', 'Null', 'x']]
+		);
+		assert.deepStrictEqual(applyNullValues([['NULL']], []), [['NULL']]);
+	});
+
+	test('rows are split into batches', () => {
+		assert.deepStrictEqual(batchRows([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+		assert.deepStrictEqual(batchRows([1, 2], 1000), [[1, 2]]);
+		assert.deepStrictEqual(batchRows([1, 2], 0), [[1, 2]]);
+	});
+
+	test('semicolon-delimited exports are detected', () => {
+		assert.strictEqual(detectSeparator('id;amount;city'), ';');
+		assert.strictEqual(detectSeparator('id;amount, net;city'), ';');
+		assert.strictEqual(detectSeparator('a,b;c'), ',');
+	});
+});
+
+suite('extension — SQL for real data', () => {
+	const settings = { varcharSizing: 'fixed' as const, quoting: 'auto' as const };
+	const opts = { tableName: 'flags', dialect: 'mysql' as const, inferDataTypes: true };
+
+	test('NULL tokens, booleans and long ids together', () => {
+		const sql = createSqlTableStatement(
+			['id', 'active', 'note'],
+			[['1234567890123456789', 'true', 'NULL'], ['2', 'false', 'hi']],
+			opts,
+			settings
+		);
+		assert.ok(sql.includes('id BIGINT,'), sql);
+		assert.ok(sql.includes('active BOOLEAN,'), sql);
+		assert.ok(sql.includes('(1234567890123456789, TRUE, NULL)'), sql);
+		assert.ok(sql.includes("(2, FALSE, 'hi')"), sql);
+	});
+
+	test('inserts are batched and DROP TABLE is optional', () => {
+		const rows = Array.from({ length: 2500 }, (_, i) => [String(i)]);
+		const sql = createSqlTableStatement(['n'], rows, opts, { ...settings, dropTableIfExists: true });
+		assert.ok(sql.startsWith('DROP TABLE IF EXISTS flags;\n\nCREATE TABLE flags ('), sql.slice(0, 80));
+		assert.strictEqual((sql.match(/INSERT INTO/g) || []).length, 3);
+
+		const plain = createSqlTableStatement(['n'], rows.slice(0, 3), opts, settings);
+		assert.ok(!plain.includes('DROP TABLE'));
+		assert.strictEqual((plain.match(/INSERT INTO/g) || []).length, 1);
+	});
+});
+
+suite('jsonUtils — parseJson', () => {
+	test('long integers keep every digit', () => {
+		// JSON.parse would give 1234567890123456800.
+		const value = parseJson('{"id": 1234567890123456789}');
+		assert.strictEqual(stringifyJson(value), '{"id":1234567890123456789}');
+	});
+
+	test('numbers keep their written form', () => {
+		assert.strictEqual(stringifyJson(parseJson('[1.50, -0, 1e5]')), '[1.50,-0,1e5]');
+	});
+
+	test('strings, escapes and literals', () => {
+		const value = parseJson('{"a":"x\\"y\\n\\u00e9","b":true,"c":null,"d":false}');
+		assert.deepStrictEqual(value, { a: 'x"y\né', b: true, c: null, d: false });
+	});
+
+	test('a trailing comma is accepted', () => {
+		assert.deepStrictEqual(parseJson('[ "a", "b", ]'), ['a', 'b']);
+		assert.deepStrictEqual(parseJson('{"a": "b",}'), { a: 'b' });
+	});
+
+	test('errors give the line and column', () => {
+		assert.throws(() => parseJson('{\n  "a": 1\n  "b": 2\n}'), /line 3, column 3: expected , or \}/);
+		assert.throws(() => parseJson('[1, 2'), /unexpected end of input/);
+		assert.throws(() => parseJson("{'a': 1}"), /property name in double quotes/);
+		assert.throws(() => parseJson('[1] x'), /unexpected text after/);
+	});
+
+	test('__proto__ is kept as an ordinary key', () => {
+		const value = parseJson('{"__proto__": {"x": 1}, "a": 2}');
+		assert.strictEqual(Object.getPrototypeOf(value), Object.prototype);
+		assert.deepStrictEqual(Object.keys(value as object), ['__proto__', 'a']);
+	});
+
+	test('pretty printing indents nested values', () => {
+		assert.strictEqual(
+			stringifyJson(parseJson('{"a":[1,{"b":null}],"c":{}}'), '  '),
+			'{\n  "a": [\n    1,\n    {\n      "b": null\n    }\n  ],\n  "c": {}\n}'
+		);
+	});
+});
+
+suite('jsonUtils — reading records', () => {
+	test('looksLikeJson tells JSON from bracketed SQL Server headers', () => {
+		assert.strictEqual(looksLikeJson('[{"a":1}]'), true);
+		assert.strictEqual(looksLikeJson('  {"a":1}'), true);
+		assert.strictEqual(looksLikeJson('[1, 2]'), true);
+		assert.strictEqual(looksLikeJson('[]'), true);
+		assert.strictEqual(looksLikeJson('[id]\t[name]'), false);
+		assert.strictEqual(looksLikeJson('[null_count],[x]'), false);
+		assert.strictEqual(looksLikeJson('id,name'), false);
+	});
+
+	test('NDJSON is read one value per line', () => {
+		assert.deepStrictEqual(parseJsonDocument('{"a":1}\n\n{"a":2}\n'), [{ a: new JsonNumber('1') }, { a: new JsonNumber('2') }]);
+	});
+
+	test('NDJSON errors name the right line', () => {
+		assert.throws(() => parseJsonDocument('{"a":1}\n{"a":2}\n{"a":}'), /line 3/);
+	});
+
+	test('an API response is unwrapped to its array of records', () => {
+		const { records, path } = parseJsonRecords('{"data": [{"id": 1}, {"id": 2}], "meta": {"page": 1}}');
+		assert.strictEqual(records.length, 2);
+		assert.strictEqual(path, '$.data');
+	});
+
+	test('an object with no single array of records is one record', () => {
+		const { records, path } = parseJsonRecords('{"a": [1, 2], "b": [3]}');
+		assert.strictEqual(records.length, 1);
+		assert.strictEqual(path, '$');
+	});
+
+	test('recordsToTable unions keys and flattens nested objects', () => {
+		assert.deepStrictEqual(
+			recordsToTable(parseJson('[{"id":1,"addr":{"city":"Pune"}},{"id":2,"tags":["a","b"],"note":null}]') as JsonValue[]),
+			[
+				['id', 'addr.city', 'tags', 'note'],
+				['1', 'Pune', '', ''],
+				['2', '', '["a","b"]', '']
+			]
+		);
+	});
+
+	test('scalar records go in a value column', () => {
+		assert.deepStrictEqual(recordsToTable(parseJson('["a", 2, true]') as JsonValue[]), [['value'], ['a'], ['2'], ['true']]);
+	});
+
+	test('an empty array is an error, not an empty table', () => {
+		assert.throws(() => recordsToTable([]), /empty/);
+	});
+});
+
+suite('jsonUtils — writing records', () => {
+	const table = [['id', 'code', 'active', 'note'], ['1', '007', 'TRUE', ''], ['12345678901234567890', 'x', 'false', 'hi']];
+
+	test('types are inferred, but zero-padded ids stay strings', () => {
+		assert.strictEqual(
+			tableToJson(table, 'ndjson', true),
+			'{"id":1,"code":"007","active":true,"note":null}\n' +
+			'{"id":12345678901234567890,"code":"x","active":false,"note":"hi"}'
+		);
+	});
+
+	test('without inference everything is a string', () => {
+		assert.strictEqual(
+			tableToJson([['a', 'b'], ['1', '']], 'ndjson', false),
+			'{"a":"1","b":""}'
+		);
+	});
+
+	test('a JSON array is pretty-printed', () => {
+		assert.strictEqual(tableToJson([['a'], ['1']], 'array', true), '[\n  {\n    "a": 1\n  }\n]');
+	});
+
+	test('duplicate and blank headers become distinct keys', () => {
+		assert.deepStrictEqual(uniqueKeys(['id', 'id', '', 'id_2']), ['id', 'id_2', 'column_3', 'id_2_2']);
+		assert.deepStrictEqual(Object.keys(tableToRecords([['x', 'x'], ['1', '2']], false)[0]), ['x', 'x_2']);
+	});
+
+	test('JSON round-trips through a table', () => {
+		const json = '[{"id":1,"name":"O\'Brien, Pat"},{"id":2,"name":"Lee"}]';
+		const back = tableToJson(recordsToTable(parseJsonRecords(json).records), 'array', true);
+		assert.strictEqual(stringifyJson(parseJson(back)), json);
+	});
+});
+
+suite('jsonUtils — extractJsonPath', () => {
+	const doc = parseJson('{"data":[{"id":1,"tags":["a","b"],"owner":{"name":"Ann"}},{"id":2,"tags":[],"owner":null},{"tags":["c"]}]}');
+
+	test('a JSONPath with wildcards', () => {
+		assert.deepStrictEqual(extractJsonPath(doc, '$.data[*].id'), { values: ['1', '2'], missing: 1 });
+	});
+
+	test('a name applies to every element of an array', () => {
+		assert.deepStrictEqual(extractJsonPath(doc, 'data.id').values, ['1', '2']);
+	});
+
+	test('a path ending on arrays lists their elements', () => {
+		assert.deepStrictEqual(extractJsonPath(doc, 'data.tags').values, ['a', 'b', 'c']);
+	});
+
+	test('indexes, bracketed names and nulls', () => {
+		assert.deepStrictEqual(extractJsonPath(doc, "$['data'][0].owner.name").values, ['Ann']);
+		assert.deepStrictEqual(extractJsonPath(doc, 'data.owner.name'), { values: ['Ann'], missing: 2 });
+	});
+
+	test('objects come out as compact JSON', () => {
+		assert.deepStrictEqual(extractJsonPath(doc, 'data[0].owner').values, ['{"name":"Ann"}']);
+	});
+
+	test('an invalid path is reported', () => {
+		assert.throws(() => extractJsonPath(doc, 'data[x]'), /Invalid path/);
+	});
+});
+
+suite('transformUtils — Markdown and structured input', () => {
+	test('tableToMarkdown pads, escapes and right-aligns numbers', () => {
+		assert.strictEqual(
+			tableToMarkdown([['id', 'name'], ['1', 'a|b'], ['10', 'two\nlines']]),
+			'|  id | name         |\n' +
+			'| --: | ------------ |\n' +
+			'|   1 | a\\|b         |\n' +
+			'|  10 | two<br>lines |'
+		);
+	});
+
+	test('a Markdown table round-trips', () => {
+		const table = [['id', 'name'], ['1', 'a|b'], ['2', 'two\nlines']];
+		assert.deepStrictEqual(parseMarkdownTable(tableToMarkdown(table)), table);
+	});
+
+	test('isMarkdownTable needs the delimiter row', () => {
+		assert.strictEqual(isMarkdownTable('| a | b |\n|---|:-:|\n| 1 | 2 |'), true);
+		assert.strictEqual(isMarkdownTable('a | b\n--- | ---\n1 | 2'), true);
+		assert.strictEqual(isMarkdownTable('a|b\n1|2'), false);
+	});
+
+	test('parseStructuredTable reads JSON and says where from', () => {
+		const result = parseStructuredTable('{"rows":[{"a":1}]}');
+		assert.deepStrictEqual(result?.table, [['a'], ['1']]);
+		assert.strictEqual(result?.note, 'Read 1 JSON record from $.rows.');
+	});
+
+	test('parseStructuredTable leaves delimited text alone', () => {
+		assert.strictEqual(parseStructuredTable('a,b\n1,2'), null);
+	});
+
+	test('the SQL generator accepts JSON, ignoring the header flag', () => {
+		const { headers, dataLines } = parseSqlTabularData('[{"id": 1, "full name": "Ann"}]', false);
+		assert.deepStrictEqual(headers, ['id', 'full_name']);
+		assert.deepStrictEqual(dataLines, [['1', 'Ann']]);
+	});
+
+	test('the SQL generator accepts a Markdown table', () => {
+		const { headers, dataLines } = parseSqlTabularData('| id | name |\n|----|------|\n| 1 | Ann |');
+		assert.deepStrictEqual(headers, ['id', 'name']);
+		assert.deepStrictEqual(dataLines, [['1', 'Ann']]);
+	});
+});
+
+suite('listUtils', () => {
+	test('toLines drops only the empty line a trailing newline leaves', () => {
+		assert.deepStrictEqual(toLines('a\r\nb\r\n'), ['a', 'b']);
+		assert.deepStrictEqual(toLines('a\n\nb'), ['a', '', 'b']);
+	});
+
+	test('natural sort puts item2 before item10, ignoring case', () => {
+		assert.deepStrictEqual(sortLines(['item10', 'Item2', 'item1', ''], 'natural'), ['item1', 'Item2', 'item10']);
+		assert.deepStrictEqual(sortLines(['a', 'c', 'b'], 'naturalDesc'), ['c', 'b', 'a']);
+	});
+
+	test('numeric sort reads 1,234 and keeps non-numbers at the end', () => {
+		assert.deepStrictEqual(
+			sortLines(['10', 'n/a', '1,234', '-2', '9.5', 'abc'], 'numeric'),
+			['-2', '9.5', '10', '1,234', 'abc', 'n/a']
+		);
+		assert.deepStrictEqual(sortLines(['1', '3', '2'], 'numericDesc'), ['3', '2', '1']);
+	});
+
+	test('reverse and length', () => {
+		assert.deepStrictEqual(sortLines(['b', 'a', 'c'], 'reverse'), ['c', 'a', 'b']);
+		assert.deepStrictEqual(sortLines(['ccc', 'a', 'bb'], 'length'), ['a', 'bb', 'ccc']);
+	});
+
+	test('identifier cases agree whatever the input style', () => {
+		for (const input of ['Total Sales (USD)', 'totalSalesUSD', 'total-sales-usd', 'TOTAL_SALES_USD']) {
+			assert.strictEqual(changeCase(input, 'snake'), 'total_sales_usd', input);
+		}
+		assert.strictEqual(changeCase('total sales', 'camel'), 'totalSales');
+		assert.strictEqual(changeCase('total sales', 'pascal'), 'TotalSales');
+		assert.strictEqual(changeCase('total sales', 'kebab'), 'total-sales');
+		assert.strictEqual(changeCase('total sales', 'constant'), 'TOTAL_SALES');
+		assert.strictEqual(changeCase('HTTPServer2', 'snake'), 'http_server2');
+	});
+
+	test('title case keeps apostrophes inside words', () => {
+		assert.strictEqual(changeCase("o'brien AND the éclair", 'title'), "O'brien And The Éclair");
+	});
+
+	test('whitespace clean-up options are independent', () => {
+		const lines = ['  a   b ', '', '\tc'];
+		assert.deepStrictEqual(normaliseWhitespace(lines, { trim: true, collapse: true, dropBlank: true }), ['a b', 'c']);
+		assert.deepStrictEqual(normaliseWhitespace(lines, { trim: true, collapse: false, dropBlank: false }), ['a   b', '', 'c']);
+	});
+
+	test('templates wrap each non-blank line', () => {
+		assert.deepStrictEqual(applyTemplate(['a', '', 'b'], "'{}',"), ["'a',", '', "'b',"]);
+		assert.deepStrictEqual(applyTemplate(['x'], '{} AS {}'), ['x AS x']);
+		assert.throws(() => applyTemplate(['a'], 'no placeholder'), /\{\}/);
+	});
+
+	test('user regular expressions accept /pattern/flags and report errors', () => {
+		assert.strictEqual(parseUserRegExp('/err/i').flags, 'i');
+		assert.strictEqual(parseUserRegExp('a/b').source, 'a\\/b');
+		assert.throws(() => parseUserRegExp('('), /Invalid regular expression/);
+	});
+
+	test('filterLines keeps or removes matches, even with a global regex', () => {
+		const lines = ['ERROR a', 'info b', 'error c'];
+		assert.deepStrictEqual(filterLines(lines, /error/gi, true), ['ERROR a', 'error c']);
+		assert.deepStrictEqual(filterLines(lines, /error/i, false), ['info b']);
+	});
+
+	test('extractMatches returns matches, or capture groups tab-separated', () => {
+		assert.deepStrictEqual(extractMatches('ids 12, 7 and 300', /\d+/), ['12', '7', '300']);
+		assert.deepStrictEqual(extractMatches('a=1; b=2', /(\w)=(\d)/), ['a\t1', 'b\t2']);
+		assert.deepStrictEqual(extractMatches('abc', /x*/), []);
+	});
+
+	test('dedupeByColumn keeps the first or last row per key', () => {
+		const table = [['id', 'v'], ['1', 'old'], ['2', 'x'], ['1', 'new']];
+		assert.deepStrictEqual(dedupeByColumn(table, 0, 'first', true), [['id', 'v'], ['1', 'old'], ['2', 'x']]);
+		assert.deepStrictEqual(dedupeByColumn(table, 0, 'last', true), [['id', 'v'], ['2', 'x'], ['1', 'new']]);
+		assert.deepStrictEqual(dedupeByColumn([['a'], ['a']], 0, 'first', false), [['a']]);
+	});
+});
+
 suite('Extension', () => {
 	test('all contributed commands are registered on activation', async () => {
 		// Commands are contributed with no activation events, so nothing has
@@ -750,5 +1140,30 @@ suite('Extension', () => {
 		for (const command of expected) {
 			assert.ok(registered.includes(command), `${command} is not registered`);
 		}
+	});
+
+	test('Transform Selection replaces the selection and keeps its trailing newline', async () => {
+		const document = await vscode.workspace.openTextDocument({ content: 'item10\nb\nitem2\n', language: 'plaintext' });
+		const editor = await vscode.window.showTextDocument(document);
+		editor.selection = new vscode.Selection(0, 0, 3, 0);
+
+		// Answer the two quick-picks: the transform, then the sort order.
+		type Item = vscode.QuickPickItem & { mode?: string };
+		const answers: ((items: Item[]) => Item | undefined)[] = [
+			items => items.find(item => item.label.includes('Sort lines')),
+			items => items.find(item => item.mode === 'natural')
+		];
+		const window = vscode.window as { showQuickPick: unknown };
+		const original = window.showQuickPick;
+		window.showQuickPick = async (items: Item[] | Thenable<Item[]>) => answers.shift()?.(await items);
+		try {
+			await vscode.commands.executeCommand('list-to-csv.transform');
+		} finally {
+			window.showQuickPick = original;
+		}
+
+		assert.strictEqual(answers.length, 0, 'not every prompt was shown');
+		assert.strictEqual(document.getText(), 'b\nitem2\nitem10\n');
+		await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
 	});
 });

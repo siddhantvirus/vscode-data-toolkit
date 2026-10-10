@@ -14,7 +14,13 @@ This section is the view for anyone upgrading from **1.0.0**, which is what the 
 
 ### New in 1.2.0
 
-- **Transform Selection…** — one command that opens a searchable list of transforms and applies the chosen one in place:
+- **Transform Selection…** — one command that opens a searchable list of transforms, grouped into Lists, Tables and JSON, and applies the chosen one in place:
+  - **Sort lines** — natural (`item2` before `item10`), numeric, by length, or reversed.
+  - **Change case** — upper, lower, Title, snake_case, camelCase, PascalCase, kebab-case, CONSTANT_CASE.
+  - **Clean up whitespace** — trim, collapse spaces, remove blank lines.
+  - **Wrap each line** in a template such as `'{}',`.
+  - **Keep or remove lines matching a pattern**, and **extract matches of a pattern** (capture groups come out tab-separated).
+  - **Remove duplicate rows by a key column**, keeping the first or last row per key.
   - **Unwrap IN (...) into a list** — the reverse of building an IN clause. Undoes doubled quotes (`'O''Brien'` → `O'Brien`), accepts a whole `WHERE` predicate, and handles `N'...'` values.
   - **Extract a column** of tabular data by its header, one value per line.
   - **Transpose** rows and columns, padding short rows so no value is lost.
@@ -22,6 +28,21 @@ This section is the view for anyone upgrading from **1.0.0**, which is what the 
   - **Build a chunked IN clause** for lists beyond Oracle's 1000-item limit (`ORA-01795`), OR-ing chunks of a configurable size.
 
   New transforms will be added to this list instead of as separate commands, keeping the palette and context menu short.
+- **JSON and Markdown tables.** JSON is read everywhere tabular data is: the SQL Builder, the generate command, the Compare tab's Rows mode, and the table transforms. A JSON array, a single object, NDJSON, and API responses shaped `{"data": [...]}` are all accepted; nested objects become dotted columns (`address.city`). New transforms:
+  - **Convert to CSV or TSV** from JSON, NDJSON or a Markdown table.
+  - **Convert a table to JSON**, as a JSON array or NDJSON, with numbers, booleans and nulls typed — and `007` kept a string.
+  - **Convert to a Markdown table**, for pull requests and issues, with numeric columns right-aligned.
+  - **Extract a JSON field into a list** by path (`$.data[*].id`, or just `id`), ready for an `IN (...)` clause.
+
+  Long numeric ids are kept exactly. `JSON.parse` rounds anything past 2^53, so `1234567890123456789` would have become `1234567890123456800` in the generated SQL; the extension reads numbers as written instead.
+- **SQL that survives real exports:**
+  - **Long ids get `BIGINT`.** A column with any value past ±2,147,483,647 was typed `INT`, so the INSERT failed on overflow; past BIGINT's range it is now `DECIMAL(38,0)`.
+  - **Decimals are exact.** `FLOAT` (SQL Server, MySQL) and `DOUBLE` (Spark) became `DECIMAL(38,s)`, with the scale taken from the data — binary floats store `0.1` inexactly, which is wrong for money. PostgreSQL keeps its unconstrained `DECIMAL`.
+  - **`true`/`false` columns are boolean** — `BOOLEAN`, or `BIT` on SQL Server — with values written as `TRUE`/`FALSE` or `1`/`0`. MySQL rejected the quoted `'true'` that was emitted before. `0`/`1` and `Y`/`N` are left alone, since they are as often counts or codes.
+  - **`NULL` and `\N` cells become SQL `NULL`** instead of the strings `'NULL'` and `'\N'`. Configurable with `list-to-csv.nullValues` (add `NA`, `None`, `nan` for R and pandas) and in the SQL Builder.
+  - **INSERTs are split into batches** of 1000 rows by default — SQL Server rejects a larger `VALUES` list. `list-to-csv.insertBatchSize`, and **Rows per INSERT** in the panel.
+  - **Optional `DROP TABLE IF EXISTS`**, so a script can be re-run. Off by default. `list-to-csv.dropTableIfExists`, and a checkbox in the panel.
+  - **Semicolon-delimited files are recognised.** Excel writes them in locales that use a decimal comma; they were read as a single column.
 - **Rows that do not match the header are reported.** SQL generation squared every row off against the header, padding short rows and silently dropping the extra fields of long ones — usually a value containing the delimiter without quotes. The generate command now stops with a warning naming the rows and asks before continuing; the SQL Builder tab shows the same warning above its output.
 
 ### Fixed — data correctness

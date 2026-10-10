@@ -6,6 +6,7 @@
  * choices from the user and writes the result back to the editor.
  */
 
+import { looksLikeJson, parseJsonRecords, recordsToTable } from './jsonUtils';
 import { detectSeparator, isPlainNumber, joinAsDelimitedLine, parseDelimitedText } from './sqlUtils';
 
 /**
@@ -168,6 +169,135 @@ export function formatDelimitedRow(fields: string[], separator: string): string 
             return needsQuotes ? `"${field.replace(/"/g, '""')}"` : field;
         })
         .join(separator);
+}
+
+/** A Markdown table's delimiter row, e.g. `| --- | :---: | ---: |`. */
+const MARKDOWN_DELIMITER_ROW = /^\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?$/;
+
+/**
+ * Whether text is a Markdown table: a pipe-separated first line followed by a
+ * delimiter row. The delimiter row is what tells it apart from plain
+ * pipe-separated data, which has none.
+ */
+export function isMarkdownTable(text: string): boolean {
+    const [first, second] = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
+    return first !== undefined && first.includes('|')
+        && second !== undefined && second.includes('|') && MARKDOWN_DELIMITER_ROW.test(second);
+}
+
+/**
+ * Parse a Markdown table into rows, header first.
+ *
+ * The delimiter row is dropped, `\|` is a literal pipe, and `<br>` becomes a
+ * line break — the reverse of {@link tableToMarkdown}.
+ */
+export function parseMarkdownTable(text: string): string[][] {
+    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
+    return lines
+        .filter((_, index) => index !== 1)
+        .map(line => {
+            const cells: string[] = [];
+            let cell = '';
+            for (let i = 0; i < line.length; i++) {
+                if (line[i] === '\\' && line[i + 1] === '|') {
+                    cell += '|';
+                    i++;
+                } else if (line[i] === '|') {
+                    cells.push(cell);
+                    cell = '';
+                } else {
+                    cell += line[i];
+                }
+            }
+            cells.push(cell);
+            // Leading and trailing pipes are optional and enclose nothing.
+            if (line.startsWith('|')) { cells.shift(); }
+            if (line.endsWith('|') && !line.endsWith('\\|')) { cells.pop(); }
+            return cells.map(value => value.trim().replace(/<br\s*\/?>/gi, '\n'));
+        });
+}
+
+/**
+ * Format rows as a Markdown table, header first.
+ *
+ * Columns are padded so the source reads as a table too, and a column whose
+ * values are all numbers is right-aligned. Short rows are padded rather than
+ * dropped. Pipes are escaped and line breaks become `<br>`, so a cell cannot
+ * break the table apart.
+ */
+export function tableToMarkdown(table: string[][]): string {
+    const width = table.reduce((max, row) => Math.max(max, row.length), 0);
+    if (width === 0) {
+        throw new Error('The selection has no rows.');
+    }
+
+    const cells = table.map(row =>
+        Array.from({ length: width }, (_, column) =>
+            (column < row.length ? row[column] : '').replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>')
+        )
+    );
+
+    const numeric = Array.from({ length: width }, (_, column) => {
+        const values = cells.slice(1).map(row => row[column].trim()).filter(value => value !== '');
+        return values.length > 0 && values.every(isPlainNumber);
+    });
+    const widths = Array.from({ length: width }, (_, column) =>
+        Math.max(3, ...cells.map(row => row[column].length))
+    );
+
+    const line = (row: string[]) =>
+        '| ' + row.map((value, column) =>
+            numeric[column] ? value.padStart(widths[column]) : value.padEnd(widths[column])
+        ).join(' | ') + ' |';
+    const delimiter = '| ' + widths.map((size, column) =>
+        numeric[column] ? '-'.repeat(size - 1) + ':' : '-'.repeat(size)
+    ).join(' | ') + ' |';
+
+    return [line(cells[0]), delimiter, ...cells.slice(1).map(line)].join('\n');
+}
+
+export type StructuredFormat = 'json' | 'markdown';
+
+export interface StructuredTable {
+    table: string[][];
+    format: StructuredFormat;
+    /** Something worth telling the user about how the input was read, if anything. */
+    note?: string;
+}
+
+/** Which structured format text is in, without parsing it; null for delimited text. */
+export function detectStructuredFormat(text: string): StructuredFormat | null {
+    if (looksLikeJson(text)) {
+        return 'json';
+    }
+    return isMarkdownTable(text) ? 'markdown' : null;
+}
+
+/**
+ * Read JSON (array, object or NDJSON) or a Markdown table as rows, header
+ * first. Returns null for anything else, so the caller falls back to
+ * delimited parsing.
+ *
+ * Every table-shaped feature goes through this, which is how the SQL builder,
+ * the generate command and the transforms all accept JSON without each
+ * learning about it separately.
+ */
+export function parseStructuredTable(text: string): StructuredTable | null {
+    const format = detectStructuredFormat(text);
+    if (format === 'json') {
+        const { records, path } = parseJsonRecords(text);
+        const table = recordsToTable(records);
+        const count = `${records.length} JSON record${records.length === 1 ? '' : 's'}`;
+        return {
+            table,
+            format,
+            note: path === '$' ? `Read ${count}.` : `Read ${count} from ${path}.`
+        };
+    }
+    if (format === 'markdown') {
+        return { table: parseMarkdownTable(text), format };
+    }
+    return null;
 }
 
 export interface ChunkedInClauseOptions {

@@ -15,7 +15,9 @@ list-to-csv/
 │   └── utils/
 │       ├── sqlUtils.ts               # Delimited parsing, identifiers, type inference, value formatting
 │       ├── htmlUtils.ts              # HTML escaping, CSP nonce, RegExp escaping
-│       ├── transformUtils.ts         # Pure transforms: unwrap IN, extract, transpose, chunk
+│       ├── transformUtils.ts         # Pure transforms, Markdown tables, JSON/Markdown input detection
+│       ├── jsonUtils.ts              # Lossless JSON parser, records ↔ table, JSON paths
+│       ├── listUtils.ts              # Line transforms: sort, case, whitespace, regex, dedupe by key
 │       ├── editorUtils.ts            # Open generated SQL in a new editor tab
 │       └── diffUtils.ts              # Keyed row diff for the Compare tab
 ├── docs/
@@ -70,7 +72,7 @@ Transforms live behind the single **Transform Selection…** command rather than
 2. Add an entry to `TRANSFORMS` in `src/transformCommand.ts`. Its `run(text, eol)` gathers any further input with quick-picks or input boxes, returns the replacement text, or returns `undefined` if the user cancelled.
 3. Join output lines with the `eol` argument so CRLF documents stay CRLF.
 
-The command writes the result with `editor.edit(...)`, not the edit builder passed to `registerTextEditorCommand`: that builder is only valid synchronously, and the follow-up prompts are awaited.
+The command is registered with `registerCommand` and reads `window.activeTextEditor`, not with `registerTextEditorCommand`. The latter neither awaits an async callback — so `executeCommand` resolves before the prompts are answered — nor keeps its edit builder valid past the first `await`.
 
 ## Regenerating Icons
 
@@ -143,6 +145,8 @@ Two adapters remain in `main.ts`, because the panel's controls are checkboxes wh
 `parseDelimitedLine` implements RFC 4180 quoting for single-character delimiters — a field like `"Smith, John"` stays one column, and `""` inside a quoted field is an escaped quote. Space-aligned columns use a RegExp separator, which has no quoting convention, so those fall back to a plain split.
 
 `parseDelimitedText` parses a whole document rather than a line at a time, so quoting is honoured across newlines and a quoted field containing one survives intact. Both SQL pipelines use it. `parseDelimitedLine` remains for single-line callers and for the RegExp-separator fallback, where space-aligned columns have no quoting convention.
+
+**JSON and Markdown input** go through `parseStructuredTable` in `transformUtils.ts`, which returns rows (header first) or `null` for delimited text. Every table-shaped path calls it before falling back to `detectSeparator`, so a new feature gets JSON support by doing the same. JSON is parsed by `parseJson` in `jsonUtils.ts`, not `JSON.parse`: numbers are kept as `JsonNumber` holding their source text, because `JSON.parse` rounds integers beyond 2^53 and ids that long are common.
 
 `sanitizeColumnNames` guarantees identifiers that every dialect accepts: punctuation collapsed to single underscores, leading digits prefixed with `col_`, blanks named positionally, and duplicates suffixed case-insensitively.
 
