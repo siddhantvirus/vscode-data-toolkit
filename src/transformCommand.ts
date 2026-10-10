@@ -466,7 +466,15 @@ const TRANSFORMS: PickItem[] = [
  * the user types, so new transforms cost no palette or menu space.
  */
 export function registerTransformCommand(): vscode.Disposable {
-    return vscode.commands.registerTextEditorCommand('list-to-csv.transform', async (editor) => {
+    // registerCommand rather than registerTextEditorCommand: the latter does
+    // not await an async callback, so executeCommand would resolve before the
+    // prompts are answered and the edit is made.
+    return vscode.commands.registerCommand('list-to-csv.transform', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showInformationMessage('Open a file and select the text to transform first.');
+            return;
+        }
         const selection = editor.selection;
         if (selection.isEmpty) {
             vscode.window.showInformationMessage('Select the text to transform first.');
@@ -494,8 +502,6 @@ export function registerTransformCommand(): vscode.Disposable {
             if (/\n$/.test(text) && !/\n$/.test(result)) {
                 result += eol;
             }
-            // editor.edit rather than the command's edit builder: the builder
-            // is only valid synchronously, and the prompts above are awaited.
             await editor.edit(builder => builder.replace(selection, result));
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

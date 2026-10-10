@@ -72,7 +72,7 @@ Transforms live behind the single **Transform Selection…** command rather than
 2. Add an entry to `TRANSFORMS` in `src/transformCommand.ts`. Its `run(text, eol)` gathers any further input with quick-picks or input boxes, returns the replacement text, or returns `undefined` if the user cancelled.
 3. Join output lines with the `eol` argument so CRLF documents stay CRLF.
 
-The command writes the result with `editor.edit(...)`, not the edit builder passed to `registerTextEditorCommand`: that builder is only valid synchronously, and the follow-up prompts are awaited.
+The command is registered with `registerCommand` and reads `window.activeTextEditor`, not with `registerTextEditorCommand`. The latter neither awaits an async callback — so `executeCommand` resolves before the prompts are answered — nor keeps its edit builder valid past the first `await`.
 
 ## Regenerating Icons
 
