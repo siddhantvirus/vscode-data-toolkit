@@ -14,7 +14,13 @@ This section is the view for anyone upgrading from **1.0.0**, which is what the 
 
 ### New in 1.2.0
 
-- **Transform Selection…** — one command that opens a searchable list of transforms and applies the chosen one in place:
+- **Transform Selection…** — one command that opens a searchable list of transforms, grouped into Lists, Tables and JSON, and applies the chosen one in place:
+  - **Sort lines** — natural (`item2` before `item10`), numeric, by length, or reversed.
+  - **Change case** — upper, lower, Title, snake_case, camelCase, PascalCase, kebab-case, CONSTANT_CASE.
+  - **Clean up whitespace** — trim, collapse spaces, remove blank lines.
+  - **Wrap each line** in a template such as `'{}',`.
+  - **Keep or remove lines matching a pattern**, and **extract matches of a pattern** (capture groups come out tab-separated).
+  - **Remove duplicate rows by a key column**, keeping the first or last row per key.
   - **Unwrap IN (...) into a list** — the reverse of building an IN clause. Undoes doubled quotes (`'O''Brien'` → `O'Brien`), accepts a whole `WHERE` predicate, and handles `N'...'` values.
   - **Extract a column** of tabular data by its header, one value per line.
   - **Transpose** rows and columns, padding short rows so no value is lost.

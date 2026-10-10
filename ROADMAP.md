@@ -106,15 +106,14 @@ All four **done in 1.2.0**, behind the `Transform Selection…` quick-pick:
 
 ### List transforms
 
-All behind the `Transform…` quick-pick, operating in place on a selection.
+All **done in 1.2.0**, behind the `Transform Selection…` quick-pick.
 
-- **Sort** — alphabetical, numeric, natural/version order, reverse.
-- **Change case** — upper, lower, Title, snake_case, camelCase, kebab-case.
-- **Trim and normalise whitespace** — as a first-class command, not only an
-  option on other tools.
-- **Add prefix/suffix or wrap each line**.
-- **Filter lines by regex** — keep or drop matches.
-- **Extract all regex matches**, including capture groups.
+- ~~Sort~~ — natural, numeric, by length, reverse.
+- ~~Change case~~ — upper, lower, Title, snake, camel, Pascal, kebab, CONSTANT.
+- ~~Trim and normalise whitespace~~.
+- ~~Add prefix/suffix or wrap each line~~ — as a `'{}',` template.
+- ~~Filter lines by regex~~ — keep or drop matches.
+- ~~Extract all regex matches~~, with capture groups tab-separated.
 
 ### Reshaping and aggregation
 
@@ -122,8 +121,8 @@ All behind the `Transform…` quick-pick, operating in place on a selection.
   and entirely missing.
 - **Group by with an aggregate** on a second column — sum, avg, min, max.
   Only `COUNT` exists today.
-- **Dedupe by key column**, keeping the first or last row. Distinct from the
-  existing whole-line dedupe.
+- ~~Dedupe by key column~~ — **done in 1.2.0** as a transform, keeping the first
+  or last row per key.
 - **Frequency table** with percentage, cumulative percentage and top-N cutoff.
 
 ### Profiling

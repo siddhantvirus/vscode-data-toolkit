@@ -18,6 +18,7 @@ A VS Code extension built for data engineers. Convert lists, build SQL scripts, 
 | Convert list to CSV / SQL IN clause | Right-click selection → Data Toolkit |
 | Unwrap an IN clause, extract a column, transpose, chunk long IN lists | Right-click selection → Data Toolkit → Transform Selection… |
 | JSON ↔ CSV/TSV, table → Markdown, extract a JSON field | Right-click selection → Data Toolkit → Transform Selection… |
+| Sort, change case, clean whitespace, wrap lines, filter or extract by regex, dedupe by key | Right-click selection → Data Toolkit → Transform Selection… |
 | Count value occurrences (GROUP BY) | Right-click selection → Data Toolkit |
 | Remove duplicate lines | Right-click selection → Data Toolkit |
 | Compare two columns (set operations) | Right-click selection → Data Toolkit |
@@ -34,8 +35,17 @@ Select one or more lines in any editor, right-click, and choose **Data Toolkit**
 ### Transform Selection…
 One entry that opens a searchable list of transforms and applies the one you pick to the selection, in place. Type to filter; **Ctrl+Z** undoes it.
 
+The list is grouped into **Lists**, **Tables** and **JSON**.
+
 | Transform | Example |
 |---|---|
+| **Sort lines** | Natural order (`item2` before `item10`, ignoring case), numeric (reads `1,234`; non-numbers follow), by length, or reversed. |
+| **Change case** | `UPPER`, `lower`, `Title`, `snake_case`, `camelCase`, `PascalCase`, `kebab-case`, `CONSTANT_CASE`. `Total Sales (USD)` → `total_sales_usd`. |
+| **Clean up whitespace** | Trim each line, collapse runs of spaces and tabs, remove blank lines — any combination. |
+| **Wrap each line** | A template where `{}` is the line: `'{}',` turns `abc` into `'abc',`. |
+| **Keep or remove lines matching a pattern** | Regular expression filter; `/timeout/i` for case-insensitive. |
+| **Extract matches of a pattern** | Pull ids, emails or codes out of logs or free text. With capture groups, the groups come out tab-separated. |
+| **Remove duplicate rows by a key column** | Keep the first or last row for each key — unlike Remove Duplicate Lines, rows with the same key but different values count as duplicates. |
 | **Unwrap IN (...) into a list** | `WHERE id IN ('O''Brien','Alice')` → `O'Brien` / `Alice`. Undoes quoting, accepts a whole predicate, and handles `N'...'` values. The exact reverse of building an IN clause. |
 | **Extract a column** | Pick a column of pasted tabular data by its header; get just that column, one value per line — ready to turn into an IN list. |
 | **Transpose rows and columns** | Rows become columns. Short rows are padded, so no value is lost. |

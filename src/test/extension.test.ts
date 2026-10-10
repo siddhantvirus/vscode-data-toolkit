@@ -34,6 +34,17 @@ import {
 	unwrapInClause
 } from '../utils/transformUtils';
 import {
+	applyTemplate,
+	changeCase,
+	dedupeByColumn,
+	extractMatches,
+	filterLines,
+	normaliseWhitespace,
+	parseUserRegExp,
+	sortLines,
+	toLines
+} from '../utils/listUtils';
+import {
 	extractJsonPath,
 	JsonNumber,
 	JsonValue,
@@ -1026,6 +1037,83 @@ suite('transformUtils — Markdown and structured input', () => {
 	});
 });
 
+suite('listUtils', () => {
+	test('toLines drops only the empty line a trailing newline leaves', () => {
+		assert.deepStrictEqual(toLines('a\r\nb\r\n'), ['a', 'b']);
+		assert.deepStrictEqual(toLines('a\n\nb'), ['a', '', 'b']);
+	});
+
+	test('natural sort puts item2 before item10, ignoring case', () => {
+		assert.deepStrictEqual(sortLines(['item10', 'Item2', 'item1', ''], 'natural'), ['item1', 'Item2', 'item10']);
+		assert.deepStrictEqual(sortLines(['a', 'c', 'b'], 'naturalDesc'), ['c', 'b', 'a']);
+	});
+
+	test('numeric sort reads 1,234 and keeps non-numbers at the end', () => {
+		assert.deepStrictEqual(
+			sortLines(['10', 'n/a', '1,234', '-2', '9.5', 'abc'], 'numeric'),
+			['-2', '9.5', '10', '1,234', 'abc', 'n/a']
+		);
+		assert.deepStrictEqual(sortLines(['1', '3', '2'], 'numericDesc'), ['3', '2', '1']);
+	});
+
+	test('reverse and length', () => {
+		assert.deepStrictEqual(sortLines(['b', 'a', 'c'], 'reverse'), ['c', 'a', 'b']);
+		assert.deepStrictEqual(sortLines(['ccc', 'a', 'bb'], 'length'), ['a', 'bb', 'ccc']);
+	});
+
+	test('identifier cases agree whatever the input style', () => {
+		for (const input of ['Total Sales (USD)', 'totalSalesUSD', 'total-sales-usd', 'TOTAL_SALES_USD']) {
+			assert.strictEqual(changeCase(input, 'snake'), 'total_sales_usd', input);
+		}
+		assert.strictEqual(changeCase('total sales', 'camel'), 'totalSales');
+		assert.strictEqual(changeCase('total sales', 'pascal'), 'TotalSales');
+		assert.strictEqual(changeCase('total sales', 'kebab'), 'total-sales');
+		assert.strictEqual(changeCase('total sales', 'constant'), 'TOTAL_SALES');
+		assert.strictEqual(changeCase('HTTPServer2', 'snake'), 'http_server2');
+	});
+
+	test('title case keeps apostrophes inside words', () => {
+		assert.strictEqual(changeCase("o'brien AND the éclair", 'title'), "O'brien And The Éclair");
+	});
+
+	test('whitespace clean-up options are independent', () => {
+		const lines = ['  a   b ', '', '\tc'];
+		assert.deepStrictEqual(normaliseWhitespace(lines, { trim: true, collapse: true, dropBlank: true }), ['a b', 'c']);
+		assert.deepStrictEqual(normaliseWhitespace(lines, { trim: true, collapse: false, dropBlank: false }), ['a   b', '', 'c']);
+	});
+
+	test('templates wrap each non-blank line', () => {
+		assert.deepStrictEqual(applyTemplate(['a', '', 'b'], "'{}',"), ["'a',", '', "'b',"]);
+		assert.deepStrictEqual(applyTemplate(['x'], '{} AS {}'), ['x AS x']);
+		assert.throws(() => applyTemplate(['a'], 'no placeholder'), /\{\}/);
+	});
+
+	test('user regular expressions accept /pattern/flags and report errors', () => {
+		assert.strictEqual(parseUserRegExp('/err/i').flags, 'i');
+		assert.strictEqual(parseUserRegExp('a/b').source, 'a\\/b');
+		assert.throws(() => parseUserRegExp('('), /Invalid regular expression/);
+	});
+
+	test('filterLines keeps or removes matches, even with a global regex', () => {
+		const lines = ['ERROR a', 'info b', 'error c'];
+		assert.deepStrictEqual(filterLines(lines, /error/gi, true), ['ERROR a', 'error c']);
+		assert.deepStrictEqual(filterLines(lines, /error/i, false), ['info b']);
+	});
+
+	test('extractMatches returns matches, or capture groups tab-separated', () => {
+		assert.deepStrictEqual(extractMatches('ids 12, 7 and 300', /\d+/), ['12', '7', '300']);
+		assert.deepStrictEqual(extractMatches('a=1; b=2', /(\w)=(\d)/), ['a\t1', 'b\t2']);
+		assert.deepStrictEqual(extractMatches('abc', /x*/), []);
+	});
+
+	test('dedupeByColumn keeps the first or last row per key', () => {
+		const table = [['id', 'v'], ['1', 'old'], ['2', 'x'], ['1', 'new']];
+		assert.deepStrictEqual(dedupeByColumn(table, 0, 'first', true), [['id', 'v'], ['1', 'old'], ['2', 'x']]);
+		assert.deepStrictEqual(dedupeByColumn(table, 0, 'last', true), [['id', 'v'], ['2', 'x'], ['1', 'new']]);
+		assert.deepStrictEqual(dedupeByColumn([['a'], ['a']], 0, 'first', false), [['a']]);
+	});
+});
+
 suite('Extension', () => {
 	test('all contributed commands are registered on activation', async () => {
 		// Commands are contributed with no activation events, so nothing has
@@ -1052,5 +1140,30 @@ suite('Extension', () => {
 		for (const command of expected) {
 			assert.ok(registered.includes(command), `${command} is not registered`);
 		}
+	});
+
+	test('Transform Selection replaces the selection and keeps its trailing newline', async () => {
+		const document = await vscode.workspace.openTextDocument({ content: 'item10\nb\nitem2\n', language: 'plaintext' });
+		const editor = await vscode.window.showTextDocument(document);
+		editor.selection = new vscode.Selection(0, 0, 3, 0);
+
+		// Answer the two quick-picks: the transform, then the sort order.
+		type Item = vscode.QuickPickItem & { mode?: string };
+		const answers: ((items: Item[]) => Item | undefined)[] = [
+			items => items.find(item => item.label.includes('Sort lines')),
+			items => items.find(item => item.mode === 'natural')
+		];
+		const window = vscode.window as { showQuickPick: unknown };
+		const original = window.showQuickPick;
+		window.showQuickPick = async (items: Item[] | Thenable<Item[]>) => answers.shift()?.(await items);
+		try {
+			await vscode.commands.executeCommand('list-to-csv.transform');
+		} finally {
+			window.showQuickPick = original;
+		}
+
+		assert.strictEqual(answers.length, 0, 'not every prompt was shown');
+		assert.strictEqual(document.getText(), 'b\nitem2\nitem10\n');
+		await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
 	});
 });

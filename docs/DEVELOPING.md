@@ -17,6 +17,7 @@ list-to-csv/
 │       ├── htmlUtils.ts              # HTML escaping, CSP nonce, RegExp escaping
 │       ├── transformUtils.ts         # Pure transforms, Markdown tables, JSON/Markdown input detection
 │       ├── jsonUtils.ts              # Lossless JSON parser, records ↔ table, JSON paths
+│       ├── listUtils.ts              # Line transforms: sort, case, whitespace, regex, dedupe by key
 │       ├── editorUtils.ts            # Open generated SQL in a new editor tab
 │       └── diffUtils.ts              # Keyed row diff for the Compare tab
 ├── docs/

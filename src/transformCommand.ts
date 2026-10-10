@@ -1,5 +1,16 @@
 import * as vscode from 'vscode';
 import { extractJsonPath, parseJsonDocument, tableToJson } from './utils/jsonUtils';
+import {
+    applyTemplate,
+    changeCase,
+    dedupeByColumn,
+    extractMatches,
+    filterLines,
+    normaliseWhitespace,
+    parseUserRegExp,
+    sortLines,
+    toLines
+} from './utils/listUtils';
 import { describeRaggedRows, detectSeparator, findRaggedRows, parseDelimitedText } from './utils/sqlUtils';
 import {
     buildChunkedInClause,
@@ -78,8 +89,139 @@ async function confirmRagged(table: string[][]): Promise<boolean> {
     return choice === 'Convert Anyway';
 }
 
+/** Ask for a regular expression, validating it as it is typed. */
+function askForRegExp(prompt: string, placeHolder: string): Thenable<string | undefined> {
+    return vscode.window.showInputBox({
+        prompt,
+        placeHolder,
+        validateInput: value => {
+            if (!value) {
+                return 'Enter a pattern';
+            }
+            try {
+                parseUserRegExp(value);
+                return null;
+            } catch (error) {
+                return error instanceof Error ? error.message : String(error);
+            }
+        }
+    });
+}
+
 const TRANSFORMS: PickItem[] = [
     group('Lists'),
+    {
+        label: '$(sort-precedence) Sort lines',
+        description: 'Natural, numeric, by length, or reversed',
+        detail: 'Natural order puts item2 before item10. Blank lines are removed.',
+        async run(text, eol) {
+            const mode = await vscode.window.showQuickPick(
+                [
+                    { label: 'A → Z', description: 'natural: item2 before item10, ignoring case', mode: 'natural' as const },
+                    { label: 'Z → A', description: 'natural, descending', mode: 'naturalDesc' as const },
+                    { label: 'Smallest number first', description: 'non-numbers follow, A → Z', mode: 'numeric' as const },
+                    { label: 'Largest number first', description: 'non-numbers follow, A → Z', mode: 'numericDesc' as const },
+                    { label: 'Shortest first', description: 'by length', mode: 'length' as const },
+                    { label: 'Reverse', description: 'flip the current order without sorting', mode: 'reverse' as const }
+                ],
+                { placeHolder: 'Sort order' }
+            );
+            return mode && sortLines(toLines(text), mode.mode).join(eol);
+        }
+    },
+    {
+        label: '$(case-sensitive) Change case',
+        description: 'UPPER, lower, Title, snake_case, camelCase, …',
+        detail: 'Applied to each line. snake_case turns "Total Sales (USD)" into total_sales_usd.',
+        async run(text, eol) {
+            const mode = await vscode.window.showQuickPick(
+                [
+                    { label: 'UPPER CASE', mode: 'upper' as const },
+                    { label: 'lower case', mode: 'lower' as const },
+                    { label: 'Title Case', mode: 'title' as const },
+                    { label: 'snake_case', mode: 'snake' as const },
+                    { label: 'camelCase', mode: 'camel' as const },
+                    { label: 'PascalCase', mode: 'pascal' as const },
+                    { label: 'kebab-case', mode: 'kebab' as const },
+                    { label: 'CONSTANT_CASE', mode: 'constant' as const }
+                ],
+                { placeHolder: 'Case' }
+            );
+            return mode && toLines(text).map(line => changeCase(line, mode.mode)).join(eol);
+        }
+    },
+    {
+        label: '$(whitespace) Clean up whitespace',
+        description: 'Trim lines, collapse spaces, remove blank lines',
+        detail: 'Choose any combination; all three are selected to start with.',
+        async run(text, eol) {
+            const picked = await vscode.window.showQuickPick(
+                [
+                    { label: 'Trim each line', key: 'trim' as const, picked: true },
+                    { label: 'Collapse runs of spaces and tabs', key: 'collapse' as const, picked: true },
+                    { label: 'Remove blank lines', key: 'dropBlank' as const, picked: true }
+                ],
+                { placeHolder: 'Clean-ups to apply', canPickMany: true }
+            );
+            if (!picked) {
+                return undefined;
+            }
+            const chosen = new Set(picked.map(item => item.key));
+            return normaliseWhitespace(toLines(text), {
+                trim: chosen.has('trim'),
+                collapse: chosen.has('collapse'),
+                dropBlank: chosen.has('dropBlank')
+            }).join(eol);
+        }
+    },
+    {
+        label: '$(bracket) Wrap each line',
+        description: "Template per line: '{}', → 'value',",
+        detail: '{} stands for the line. Add a prefix, a suffix, or both.',
+        async run(text, eol) {
+            const template = await vscode.window.showInputBox({
+                prompt: 'Template for each line — {} is the line',
+                value: "'{}',",
+                validateInput: value => value.includes('{}') ? null : 'Include {} where the line goes'
+            });
+            return template === undefined ? undefined : applyTemplate(toLines(text), template).join(eol);
+        }
+    },
+    {
+        label: '$(filter) Keep or remove lines matching a pattern',
+        description: 'Filter by regular expression',
+        detail: 'Type a pattern, or /pattern/i for case-insensitive.',
+        async run(text, eol) {
+            const action = await vscode.window.showQuickPick(
+                [
+                    { label: 'Keep matching lines', keep: true },
+                    { label: 'Remove matching lines', keep: false }
+                ],
+                { placeHolder: 'Keep or remove?' }
+            );
+            if (!action) {
+                return undefined;
+            }
+            const pattern = await askForRegExp('Lines to ' + (action.keep ? 'keep' : 'remove'), 'e.g. ^ERROR or /timeout/i');
+            return pattern === undefined ? undefined : filterLines(toLines(text), parseUserRegExp(pattern), action.keep).join(eol);
+        }
+    },
+    {
+        label: '$(regex) Extract matches of a pattern',
+        description: 'Pull ids, emails or codes out of free text',
+        detail: 'Each match on its own line. With capture groups, the groups are returned, tab-separated.',
+        async run(text, eol) {
+            const pattern = await askForRegExp('Pattern to extract', 'e.g. [\\w.+-]+@[\\w-]+\\.[\\w.]+ or order #(\\d+)');
+            if (pattern === undefined) {
+                return undefined;
+            }
+            const matches = extractMatches(text, parseUserRegExp(pattern));
+            if (matches.length === 0) {
+                throw new Error('Nothing in the selection matches that pattern.');
+            }
+            return matches.join(eol);
+        }
+    },
     {
         label: '$(list-unordered) Unwrap IN (...) into a list',
         description: "IN ('a','b') → a, b on separate lines",
@@ -159,6 +301,54 @@ const TRANSFORMS: PickItem[] = [
             }
 
             return extractColumn(table, column.index, skipHeader).join(eol);
+        }
+    },
+    {
+        label: '$(fold) Remove duplicate rows by a key column',
+        description: 'Keep the first or last row for each key',
+        detail: 'Rows count as duplicates when the key matches, even if other columns differ.',
+        async run(text, eol) {
+            const { table, separator, hasHeader: knownHeader } = readTable(text);
+
+            const column = await vscode.window.showQuickPick(
+                table[0].map((value, index) => ({
+                    label: value.trim() || `(column ${index + 1})`,
+                    description: `column ${index + 1}`,
+                    index
+                })),
+                { placeHolder: 'Key column' }
+            );
+            if (!column) {
+                return undefined;
+            }
+
+            const keep = await vscode.window.showQuickPick(
+                [
+                    { label: 'Keep the first row for each key', keep: 'first' as const },
+                    { label: 'Keep the last row for each key', description: 'e.g. the latest in an append-only export', keep: 'last' as const }
+                ],
+                { placeHolder: 'Which row to keep?' }
+            );
+            if (!keep) {
+                return undefined;
+            }
+
+            let hasHeader = knownHeader;
+            if (!knownHeader) {
+                const header = await vscode.window.showQuickPick(
+                    ['Yes — keep it at the top', 'No — the first row is data'],
+                    { placeHolder: 'Is the first row a header?' }
+                );
+                if (!header) {
+                    return undefined;
+                }
+                hasHeader = header.startsWith('Yes');
+            }
+
+            const result = dedupeByColumn(table, column.index, keep.keep, hasHeader);
+            const removed = table.length - result.length;
+            vscode.window.setStatusBarMessage(`Removed ${removed} duplicate row${removed === 1 ? '' : 's'}.`, 5000);
+            return result.map(row => formatDelimitedRow(row, separator)).join(eol);
         }
     },
     {
@@ -295,9 +485,14 @@ export function registerTransformCommand(): vscode.Disposable {
         }
 
         try {
-            const result = await transform.run(text, eol);
+            let result = await transform.run(text, eol);
             if (result === undefined) {
                 return;
+            }
+            // Whole-line selections end in a newline; keep it, so the line
+            // after the selection is not pulled up onto the last result line.
+            if (/\n$/.test(text) && !/\n$/.test(result)) {
+                result += eol;
             }
             // editor.edit rather than the command's edit builder: the builder
             // is only valid synchronously, and the prompts above are awaited.
