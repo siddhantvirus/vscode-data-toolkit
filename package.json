@@ -27,6 +27,11 @@
         "category": "Data Toolkit"
       },
       {
+        "command": "list-to-csv.transform",
+        "title": "Data Toolkit: Transform Selection…",
+        "category": "Data Toolkit"
+      },
+      {
         "command": "list-to-csv.convert",
         "title": "Data Toolkit: Convert to CSV Format",
         "category": "Data Toolkit"
@@ -81,6 +86,10 @@
         }
       ],
       "list-to-csv.submenu": [
+        {
+          "command": "list-to-csv.transform",
+          "group": "0_transform@1"
+        },
         {
           "command": "list-to-csv.convert",
           "group": "1_convert@1"
@@ -179,7 +188,8 @@
     "lint": "eslint src",
     "lint-fix-custom": "eslint src --fix",
     "test": "vscode-test",
-    "inspect-vsix": "node ./scripts/inspect-vsix.js"
+    "inspect-vsix": "node ./scripts/inspect-vsix.js",
+    "render-panel": "npm run compile-tests && node esbuild.js && node scripts/render-panel.js"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

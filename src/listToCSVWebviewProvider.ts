@@ -524,6 +524,7 @@ td.cell-changed { background: rgba(229,192,123,.16); }
         <button class="secondary" data-action="copySQL">Copy SQL</button>
         <button class="secondary" data-action="openSqlInEditor">Open in Editor</button>
     </div>
+    <div id="sqlWarnings"></div>
     <div id="sqlOutput" class="sql-output hidden"></div>
     <div id="sqlStatus" class="status-box hidden"></div>
 </div>

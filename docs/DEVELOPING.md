@@ -8,12 +8,14 @@ Deep-dive reference for working on the extension. For contribution process and s
 list-to-csv/
 ├── src/
 │   ├── extension.ts                  # Entry point: registers all commands
+│   ├── transformCommand.ts           # "Transform Selection…" quick-pick
 │   ├── listToCSVWebviewProvider.ts   # Panel lifecycle + HTML/CSS (no script)
 │   ├── webview/
 │   │   └── main.ts                   # Panel script; imports from utils, bundled separately
 │   └── utils/
 │       ├── sqlUtils.ts               # Delimited parsing, identifiers, type inference, value formatting
 │       ├── htmlUtils.ts              # HTML escaping, CSP nonce, RegExp escaping
+│       ├── transformUtils.ts         # Pure transforms: unwrap IN, extract, transpose, chunk
 │       ├── editorUtils.ts            # Open generated SQL in a new editor tab
 │       └── diffUtils.ts              # Keyed row diff for the Compare tab
 ├── docs/
@@ -24,6 +26,7 @@ list-to-csv/
 │   └── icon-256.png                  # 256×256 — higher-res copy
 ├── scripts/
 │   ├── generate-icons.js             # Converts icon.svg → icon.png + icon-256.png (uses sharp)
+│   ├── render-panel.js               # Renders the panel as standalone HTML for browser testing
 │   └── inspect-vsix.js               # Builds a VSIX and lists its contents
 ├── package.json
 ├── tsconfig.json
@@ -48,6 +51,26 @@ npm run lint          # eslint src
 ```
 
 The compiled output goes to `dist/extension.js` (via esbuild). The `out/` directory is used only by the test runner (`compile-tests`).
+
+## Testing the Panel in a Browser
+
+```bash
+npm run render-panel
+```
+
+Builds everything and writes `out/panel.html`: the real panel HTML with `dist/webview.js` inlined, the page's nonce kept so the Content-Security-Policy applies exactly as in the editor, and `acquireVsCodeApi` replaced by a shim that records posted messages on `window.__posted`. Serve the file over `http://localhost` and drive it from browser devtools.
+
+It proves the panel script behaves; it does **not** prove VS Code can load `dist/webview.js` through `asWebviewUri`. Only opening the panel in the Extension Development Host (`F5`) covers that — do it before any release.
+
+## Adding a Transform
+
+Transforms live behind the single **Transform Selection…** command rather than as separate commands, so the palette and context menu stay short.
+
+1. Write the transform as a pure function in `src/utils/transformUtils.ts` and unit-test it there — text or rows in, text or rows out.
+2. Add an entry to `TRANSFORMS` in `src/transformCommand.ts`. Its `run(text, eol)` gathers any further input with quick-picks or input boxes, returns the replacement text, or returns `undefined` if the user cancelled.
+3. Join output lines with the `eol` argument so CRLF documents stay CRLF.
+
+The command writes the result with `editor.edit(...)`, not the edit builder passed to `registerTextEditorCommand`: that builder is only valid synchronously, and the follow-up prompts are awaited.
 
 ## Regenerating Icons
 

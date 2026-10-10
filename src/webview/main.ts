@@ -11,6 +11,8 @@ import {
     detectSeparator as detectSep,
     formatSqlValue as fmtSqlVal,
     getDefaultDataType as getDefaultType,
+    describeRaggedRows,
+    findRaggedRows,
     inferSqlDataType,
     joinAsDelimitedLine,
     parseDelimitedText,
@@ -392,6 +394,10 @@ function copyCompare(key) {
 
 /* ═══ TAB 4: SQL BUILDER ════════════════════════════════════ */
 function generateSQL() {
+    /* Cleared first so a warning never outlives the input that caused it. */
+    var warnings = el('sqlWarnings');
+    warnings.innerHTML = '';
+
     var raw = el('sqlInput').value;
     var lines = raw.split(/\r?\n/).filter(function(l) { return l.trim() !== ''; });
     if (!lines.length) { showStatus('sqlStatus', 'No data found.', false); return; }
@@ -417,6 +423,16 @@ function generateSQL() {
            honoured across newlines. */
         var rows = parseDelimitedText(raw, sep);
         if (!rows.length) { showStatus('sqlStatus', 'No data found.', false); return; }
+
+        /* Rows narrower or wider than the first are padded or truncated below;
+           say so rather than silently dropping the extra fields. The panel
+           shows the warning beside the output instead of blocking, since the
+           result is visible and nothing has been copied yet. */
+        var shape = findRaggedRows(rows);
+        warnings.innerHTML = shape.ragged.length
+            ? '<div class="diff-warning">' + escHtml(describeRaggedRows(shape.ragged, shape.expected)) + '</div>'
+            : '';
+
         if (hasHdr) {
             headers  = sanitizeColumnNames(rows[0]);
             dataRows = rows.slice(1);
