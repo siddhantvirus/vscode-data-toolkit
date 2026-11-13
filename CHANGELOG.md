@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 First stable release since 1.0.0, promoting the 1.1.x pre-release line.
 
-This section is the view for anyone upgrading from **1.0.0**, which is what the stable channel has been serving. The per-version entries beneath it are kept for people following the pre-release channel. Everything here was exercised on pre-release first **except the items under _New in 1.2.0_**, which were added after 1.1.7.
+This section is the view for anyone upgrading from **1.0.0**, which is what the stable channel has been serving. The per-version entries beneath it are kept for people following the pre-release channel. Everything here was exercised on pre-release first: the items under _New in 1.2.0_ shipped as pre-release **1.1.8**, the rest in 1.1.0–1.1.7.
 
 ### New in 1.2.0
 
@@ -83,6 +83,14 @@ These produced wrong output silently, with no error to notice:
 
 - Identifiers are quoted only when they need it, so `my_table` stays bare while a reserved word such as `order` is quoted. This also stops PostgreSQL producing case-sensitive identifiers by default.
 - The Convert tab is now **List → Line**.
+
+---
+
+## [1.1.8] — 2026-11-13
+
+Pre-release of everything under _New in 1.2.0_ above, so it is exercised before reaching the stable channel. Same code as 1.2.0 will be; only the version number differs, because pre-releases need an odd minor version.
+
+**Behaviour change to watch for:** SQL Server, MySQL and Spark output now uses `DECIMAL(38,s)` for decimal columns instead of `FLOAT`/`DOUBLE`, `BIGINT` for integers beyond `INT` range, and `BOOLEAN`/`BIT` for `true`/`false` columns.
 
 ---
 
